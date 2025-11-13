@@ -1,6 +1,6 @@
 """Chess board state management module."""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import chess
 
@@ -14,9 +14,15 @@ class ChessBoard:
     and game reset functionality.
     """
 
-    def __init__(self) -> None:
-        """Initialize a new chess board in the starting position."""
+    def __init__(self, player_mappings: Optional[Dict[str, str]] = None) -> None:
+        """
+        Initialize a new chess board in the starting position.
+
+        :param player_mappings: Optional mapping of player_id to color ('white' or 'black')
+        :type player_mappings: Optional[Dict[str, str]]
+        """
         self.board = chess.Board()
+        self.player_mappings: Dict[str, str] = player_mappings or {}
 
     def reset(self) -> None:
         """Reset the board to the starting position."""
@@ -170,3 +176,28 @@ class ChessBoard:
         :rtype: str
         """
         return 'white' if self.board.turn else 'black'
+
+    def get_player_color(self, player_id: str) -> Optional[str]:
+        """
+        Get the color assigned to a player.
+
+        :param player_id: The player's unique identifier
+        :type player_id: str
+        :return: 'white' or 'black' if player exists, None otherwise
+        :rtype: Optional[str]
+        """
+        return self.player_mappings.get(player_id)
+
+    def is_players_turn(self, player_id: str) -> bool:
+        """
+        Check if it is the specified player's turn to move.
+
+        :param player_id: The player's unique identifier
+        :type player_id: str
+        :return: True if it's the player's turn, False otherwise
+        :rtype: bool
+        """
+        player_color = self.get_player_color(player_id)
+        if player_color is None:
+            return False
+        return player_color == self.get_current_turn()

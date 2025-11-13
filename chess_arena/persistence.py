@@ -35,6 +35,7 @@ def save_games(games: Dict[str, ChessBoard]) -> None:
     for game_id, board in games.items():
         game_data[game_id] = {
             "fen": board.get_fen(),
+            "player_mappings": board.player_mappings,
             "updated_at": datetime.now().isoformat()
         }
 
@@ -58,7 +59,8 @@ def load_games() -> Dict[str, ChessBoard]:
 
         games = {}
         for game_id, data in game_data.items():
-            board = ChessBoard()
+            player_mappings = data.get("player_mappings", {})
+            board = ChessBoard(player_mappings=player_mappings)
             board.board = chess.Board(data["fen"])
             games[game_id] = board
 

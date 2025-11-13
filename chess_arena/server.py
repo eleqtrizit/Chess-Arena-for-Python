@@ -1,17 +1,19 @@
 """FastAPI server for chess arena application."""
 
 import uuid
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from chess_arena.board import ChessBoard
 from chess_arena.persistence import load_games, save_games
+from chess_arena.queue import MatchmakingQueue
 from chess_arena.renderer import BoardRenderer
 
 app = FastAPI(title="Chess Arena API", version="1.0.0")
 games: Dict[str, ChessBoard] = {}
+matchmaking_queue = MatchmakingQueue()
 
 
 def get_game_board(game_id: str) -> ChessBoard:
@@ -82,13 +84,16 @@ class MoveRequest(BaseModel):
     :type game_id: str
     :param move: Move in standard algebraic notation
     :type move: str
-    :param player: Player making the move ('white' or 'black')
-    :type player: str
+    :param player_id: Player ID making the move (for matchmade games)
+    :type player_id: Optional[str]
+    :param player: Player color making the move (for non-matchmade games, 'white' or 'black')
+    :type player: Optional[str]
     """
 
     game_id: str
     move: str
-    player: str
+    player_id: Optional[str] = None
+    player: Optional[str] = None
 
 
 class ReplayRequest(BaseModel):
@@ -178,6 +183,29 @@ class LegalMovesResponse(BaseModel):
     legal_moves: List[str]
 
 
+class QueueResponse(BaseModel):
+    """
+    Response model for queue matchmaking.
+
+    :param game_id: Unique identifier for the created game
+    :type game_id: str
+    :param player_id: Unique identifier for this player
+    :type player_id: str
+    :param assigned_color: Color assigned to this player ('white' or 'black')
+    :type assigned_color: str
+    :param first_move: Player ID of the player who moves first
+    :type first_move: str
+    :param no_challengers: True if timeout occurred with no opponent
+    :type no_challengers: Optional[bool]
+    """
+
+    game_id: Optional[str] = None
+    player_id: Optional[str] = None
+    assigned_color: Optional[str] = None
+    first_move: Optional[str] = None
+    no_challengers: Optional[bool] = None
+
+
 @app.post("/newgame", response_model=NewGameResponse)
 def create_new_game() -> NewGameResponse:
     """
@@ -191,6 +219,44 @@ def create_new_game() -> NewGameResponse:
     persist_games()
     print(f"\n[New game created: {game_id}]")
     return NewGameResponse(game_id=game_id)
+
+
+@app.post("/queue", response_model=QueueResponse)
+async def join_matchmaking_queue() -> QueueResponse:
+    """
+    Join the matchmaking queue and wait for an opponent.
+
+    Waits up to 60 seconds for another player to join. Once matched,
+    both players receive a game_id, their player_id, assigned color,
+    and who moves first.
+
+    :return: Match details or timeout indication
+    :rtype: QueueResponse
+    """
+    match_result = await matchmaking_queue.join_queue(timeout=60.0)
+
+    if match_result is None:
+        return QueueResponse(no_challengers=True)
+
+    # Check if game already exists (second player matched)
+    if match_result.game_id not in games:
+        # First player to get result - create the game
+        game_board = ChessBoard(player_mappings=match_result.player_mappings)
+        games[match_result.game_id] = game_board
+        persist_games()
+
+        player_ids = list(match_result.player_mappings.keys())
+        print(f"\n[Match created: {match_result.game_id}]")
+        print(f"[Players: {player_ids[0]} ({match_result.player_mappings[player_ids[0]]}) vs "
+              f"{player_ids[1]} ({match_result.player_mappings[player_ids[1]]})]")
+
+    return QueueResponse(
+        game_id=match_result.game_id,
+        player_id=match_result.player_id,
+        assigned_color=match_result.assigned_color,
+        first_move=match_result.first_move,
+        no_challengers=False
+    )
 
 
 @app.get("/board", response_model=BoardResponse)
@@ -277,10 +343,32 @@ def make_move(move_request: MoveRequest) -> BoardResponse:
     """
     game_board = get_game_board(move_request.game_id)
     current_turn = game_board.get_current_turn()
-    if move_request.player != current_turn:
+
+    # Validate turn - support both player_id (matchmade games) and player color (non-matchmade games)
+    if move_request.player_id:
+        # Matchmade game - use player_id
+        if not game_board.is_players_turn(move_request.player_id):
+            player_color = game_board.get_player_color(move_request.player_id)
+            if player_color is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Player ID '{move_request.player_id}' is not part of this game"
+                )
+            raise HTTPException(
+                status_code=403,
+                detail=f"It is {current_turn}'s turn, not your turn (you are {player_color})"
+            )
+    elif move_request.player:
+        # Non-matchmade game - use color directly (backward compatibility)
+        if move_request.player != current_turn:
+            raise HTTPException(
+                status_code=403,
+                detail=f"It is {current_turn}'s turn, not {move_request.player}'s turn"
+            )
+    else:
         raise HTTPException(
-            status_code=403,
-            detail=f"It is {current_turn}'s turn, not {move_request.player}'s turn"
+            status_code=400,
+            detail="Either player_id or player must be provided"
         )
 
     success = game_board.make_move(move_request.move)

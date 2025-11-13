@@ -112,19 +112,18 @@ class ChessClient:
 
     :param server_url: Base URL of the Chess Arena server
     :type server_url: str
-    :param player_color: 'white' or 'black'
-    :type player_color: str
     :param search_time: Maximum time in seconds for move search
     :type search_time: float
     :param game_id: Optional game ID to join existing game
     :type game_id: str
     """
 
-    def __init__(self, server_url: str, player_color: str, search_time: float, game_id: str = None):
+    def __init__(self, server_url: str, search_time: float, game_id: Optional[str] = None):
         self.server_url = server_url
-        self.player_color = player_color
         self.search_time = search_time
         self.game_id = game_id
+        self.player_id: Optional[str] = None
+        self.player_color: Optional[str] = None
         self.nodes_searched = 0
         self.local_board = chess.Board()  # Local board for move simulation
 
@@ -428,22 +427,54 @@ class ChessClient:
 
     def run(self) -> None:
         """
-        Main game loop - poll server and make moves when it's our turn.
+        Main game loop - join queue, wait for opponent, and make moves when it's our turn.
 
         :raises Exception: If critical errors occur
         """
         console.print("[bold green]♟ Chess client started[/bold green]")
-        console.print(f"[cyan]Playing as:[/cyan] [bold]{self.player_color}[/bold]")
         console.print(f"[cyan]Search time:[/cyan] {self.search_time}s")
         console.print(f"[cyan]Server:[/cyan] {self.server_url}")
 
-        # Create new game if no game_id provided
+        # Join queue or rejoin existing game
         if not self.game_id:
-            response = self.make_request('/newgame', 'POST')
-            self.game_id = response['game_id']
-            console.print(f"[green]✓[/green] Created new game: [bold]{self.game_id}[/bold]")
+            while True:
+                console.print("\n[yellow]⏳ Joining matchmaking queue...[/yellow]")
+                console.print("[dim]Waiting for opponent (60s timeout)...[/dim]")
+
+                try:
+                    queue_response = self.make_request('/queue', 'POST')
+
+                    if queue_response.get('no_challengers'):
+                        console.print("[red]✗ No opponent found, retrying...[/red]")
+                        time.sleep(1)
+                        continue
+
+                    # Extract match details
+                    self.game_id = queue_response['game_id']
+                    self.player_id = queue_response['player_id']
+                    self.player_color = queue_response['assigned_color']
+                    first_move_player = queue_response['first_move']
+
+                    console.print("[green]✓ Match found![/green]")
+                    console.print(f"[cyan]Game ID:[/cyan] [bold]{self.game_id}[/bold]")
+                    console.print(f"[cyan]Player ID:[/cyan] [bold]{self.player_id}[/bold]")
+                    console.print(f"[cyan]Color:[/cyan] [bold]{self.player_color}[/bold]")
+
+                    if self.player_id == first_move_player:
+                        console.print("[green]You move first (White)[/green]")
+                    else:
+                        console.print("[yellow]Opponent moves first (White)[/yellow]")
+
+                    break
+
+                except Exception as e:
+                    console.print(f"[red]✗ Queue error:[/red] {e}")
+                    time.sleep(2)
         else:
-            console.print(f"[yellow]↻[/yellow] Joining game: [bold]{self.game_id}[/bold]")
+            console.print(f"[yellow]↻[/yellow] Reconnecting to game: [bold]{self.game_id}[/bold]")
+            if not self.player_id:
+                console.print("[red]⚠ Warning: --game-id provided but player_id unknown[/red]")
+                console.print("[red]This may cause issues. Start fresh without --game-id[/red]")
 
         # Initial sync with server
         self.sync_local_board()
@@ -503,7 +534,7 @@ class ChessClient:
                     # Submit move
                     response = self.make_request('/move', 'POST', {
                         'move': chosen_move,
-                        'player': self.player_color
+                        'player_id': self.player_id
                     })
 
                     # Update local board with our move
@@ -532,24 +563,19 @@ def main() -> None:
     """
     Parse command-line arguments and start the chess client.
     """
-    parser = argparse.ArgumentParser(description='Chess Arena Client')
-    parser.add_argument('--player', choices=['w', 'b', 'W', 'B', 'white', 'black'],
-                        required=True, help='Player color (w/W/white or b/B/black)')
+    parser = argparse.ArgumentParser(description='Chess Arena Client - Matchmaking Edition')
     parser.add_argument('--search-time', type=float, default=5.0,
                         help='Maximum search time per move in seconds (default: 5.0)')
     parser.add_argument('--port', type=int, default=9002,
                         help='Server port (default: 9002)')
     parser.add_argument('--game-id', type=str, default=None,
-                        help='Game ID to join existing game (if not provided, creates new game)')
+                        help='Game ID to reconnect to existing game (for recovery only)')
 
     args = parser.parse_args()
 
-    # Normalize player color
-    player_color = 'white' if args.player.lower() in ['w', 'white'] else 'black'
-
     server_url = f"http://localhost:{args.port}"
 
-    client = ChessClient(server_url, player_color, args.search_time, args.game_id)
+    client = ChessClient(server_url, args.search_time, args.game_id)
     client.run()
 
 
