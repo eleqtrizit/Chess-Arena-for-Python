@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format clean
+.PHONY: help install dev test lint format clean run
 
 help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -13,8 +13,8 @@ test:  ## Run tests
 	pytest tests/ -v
 
 lint:  ## Run linters
-	flake8 *.py
-	mypy src/
+	flake8 chess_arena/ tests/
+	mypy chess_arena/
 
 format:  ## Format code
 	autopep8 -a  --in-place --recursive .
@@ -33,5 +33,5 @@ build:  ## Build distribution packages
 	python -m build
 
 
-run:
+run:  ## Run the FastAPI server
 	python -m chess_arena
