@@ -36,8 +36,8 @@ class TestChessClient:
 
         :raises AssertionError: If initialization fails
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
-        assert client.server_url == "http://localhost:9001"
+        client = ChessClient("http://localhost:9002", "white", 5.0)
+        assert client.server_url == "http://localhost:9002"
         assert client.player_color == "white"
         assert client.search_time == 5.0
         assert client.nodes_searched == 0
@@ -48,7 +48,7 @@ class TestChessClient:
 
         :raises AssertionError: If evaluation is incorrect
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         # Empty board - only kings (insufficient material = draw)
         board = chess.Board("8/8/8/4k3/4K3/8/8/8 w - - 0 1")
         score = client.evaluate_position(board)
@@ -60,7 +60,7 @@ class TestChessClient:
 
         :raises AssertionError: If evaluation is incorrect
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         board = chess.Board()  # Starting position
         score = client.evaluate_position(board)
         # Starting position should be roughly equal (close to 0)
@@ -72,7 +72,7 @@ class TestChessClient:
 
         :raises AssertionError: If capture moves are not first
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         moves = ['e4', 'Nxd5', 'd4', 'Qxf7']
         ordered = client.order_moves(moves)
         # Captures should come first
@@ -85,7 +85,7 @@ class TestChessClient:
 
         :raises AssertionError: If center moves are not prioritized
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         moves = ['a3', 'e4', 'h3', 'd4']
         ordered = client.order_moves(moves)
         # Center moves (e4, d4) should come before edge moves (a3, h3)
@@ -103,7 +103,7 @@ class TestChessClient:
         :type mock_urlopen: Mock
         :raises AssertionError: If request handling is incorrect
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
 
         # Mock response
         mock_response = Mock()
@@ -124,7 +124,7 @@ class TestChessClient:
         :type mock_urlopen: Mock
         :raises AssertionError: If POST request handling is incorrect
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
 
         # Mock response
         mock_response = Mock()
@@ -142,7 +142,7 @@ class TestChessClient:
 
         :raises AssertionError: If wrong move is chosen
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         legal_moves = ['e4']
         chosen = client.choose_move(legal_moves)
         assert chosen == 'e4'
@@ -153,6 +153,6 @@ class TestChessClient:
 
         :raises AssertionError: If exception is not raised
         """
-        client = ChessClient("http://localhost:9001", "white", 5.0)
+        client = ChessClient("http://localhost:9002", "white", 5.0)
         with pytest.raises(Exception, match="No legal moves available"):
             client.choose_move([])

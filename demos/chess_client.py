@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, request
 
 import chess
+from rich.console import Console
+
+console = Console()
 
 # Piece values for material evaluation
 PIECE_VALUES = {
@@ -113,12 +116,15 @@ class ChessClient:
     :type player_color: str
     :param search_time: Maximum time in seconds for move search
     :type search_time: float
+    :param game_id: Optional game ID to join existing game
+    :type game_id: str
     """
 
-    def __init__(self, server_url: str, player_color: str, search_time: float):
+    def __init__(self, server_url: str, player_color: str, search_time: float, game_id: str = None):
         self.server_url = server_url
         self.player_color = player_color
         self.search_time = search_time
+        self.game_id = game_id
         self.nodes_searched = 0
         self.local_board = chess.Board()  # Local board for move simulation
 
@@ -137,10 +143,19 @@ class ChessClient:
         :raises Exception: If request fails
         """
         url = f"{self.server_url}{endpoint}"
+
+        # Add game_id to URL query params for GET requests
+        if method == 'GET' and self.game_id:
+            separator = '&' if '?' in url else '?'
+            url = f"{url}{separator}game_id={self.game_id}"
+
         headers = {'Content-Type': 'application/json'}
 
         req = request.Request(url, method=method, headers=headers)
         if data:
+            # Add game_id to POST request body
+            if self.game_id and 'game_id' not in data:
+                data['game_id'] = self.game_id
             req.data = json.dumps(data).encode('utf-8')
 
         try:
@@ -395,16 +410,18 @@ class ChessClient:
                     best_move_san = self.local_board.san(best_move_obj)
 
                 elapsed = time.time() - start_time
-                print(f"Depth {depth}: {self.nodes_searched} nodes, {elapsed:.2f}s, "
-                      f"eval={eval_score}, best={best_move_san}")
+                console.print(
+                    f"[dim]Depth {depth}:[/dim] {self.nodes_searched} nodes, {elapsed:.2f}s, "
+                    f"eval={eval_score}, best=[cyan]{best_move_san}[/cyan]"
+                )
 
                 # Stop if we found a winning move
                 if abs(eval_score) > 15000:
-                    print("Found decisive advantage, stopping search")
+                    console.print("[bold green]✓ Found decisive advantage, stopping search[/bold green]")
                     break
 
             except Exception as e:
-                print(f"Search error at depth {depth}: {e}")
+                console.print(f"[red]✗ Search error at depth {depth}:[/red] {e}")
                 break
 
         return best_move_san
@@ -415,12 +432,22 @@ class ChessClient:
 
         :raises Exception: If critical errors occur
         """
-        print(f"Chess client started: playing as {self.player_color}, search time={self.search_time}s")
-        print(f"Server: {self.server_url}")
+        console.print("[bold green]♟ Chess client started[/bold green]")
+        console.print(f"[cyan]Playing as:[/cyan] [bold]{self.player_color}[/bold]")
+        console.print(f"[cyan]Search time:[/cyan] {self.search_time}s")
+        console.print(f"[cyan]Server:[/cyan] {self.server_url}")
+
+        # Create new game if no game_id provided
+        if not self.game_id:
+            response = self.make_request('/newgame', 'POST')
+            self.game_id = response['game_id']
+            console.print(f"[green]✓[/green] Created new game: [bold]{self.game_id}[/bold]")
+        else:
+            console.print(f"[yellow]↻[/yellow] Joining game: [bold]{self.game_id}[/bold]")
 
         # Initial sync with server
         self.sync_local_board()
-        print("Board synced with server")
+        console.print("[green]✓[/green] Board synced with server")
 
         move_count = 0
 
@@ -431,9 +458,9 @@ class ChessClient:
 
                 # Check if game is over from turn response
                 if turn_response.get('game_over', False):
-                    print("\nGame over!")
+                    console.print("\n[bold red]Game over![/bold red]")
                     reason = turn_response.get('game_over_reason', 'Unknown reason')
-                    print(f"Reason: {reason}")
+                    console.print(f"[yellow]Reason:[/yellow] {reason}")
                     # Get final board state
                     board_state = self.make_request('/board')
                     print(board_state.get('rendered', ''))
@@ -446,9 +473,9 @@ class ChessClient:
                     board_state = self.make_request('/board')
 
                     if board_state.get('game_over', False):
-                        print("\nGame over!")
+                        console.print("\n[bold red]Game over![/bold red]")
                         reason = board_state.get('game_over_reason', 'Unknown reason')
-                        print(f"Reason: {reason}")
+                        console.print(f"[yellow]Reason:[/yellow] {reason}")
                         print(board_state.get('rendered', ''))
                         break
 
@@ -457,18 +484,21 @@ class ChessClient:
                     legal_moves = legal_moves_response['legal_moves']
 
                     if not legal_moves:
-                        print("No legal moves available - game over")
+                        console.print("[bold red]No legal moves available - game over[/bold red]")
                         break
 
-                    print(f"\n--- Move {move_count + 1} ({self.player_color}) ---")
-                    print(f"Legal moves ({len(legal_moves)}): {', '.join(legal_moves[:10])}...")
+                    console.print(f"\n[bold magenta]━━━ Move {move_count + 1} ({self.player_color}) ━━━[/bold magenta]")
+                    console.print(f"[dim]Legal moves ({len(legal_moves)}):[/dim] {', '.join(legal_moves[:10])}...")
 
                     # Choose move
                     move_start = time.time()
                     chosen_move = self.choose_move(legal_moves)
                     move_time = time.time() - move_start
 
-                    print(f"Chosen move: {chosen_move} (time: {move_time:.2f}s)")
+                    console.print(
+                        f"[bold green]➜ Chosen move:[/bold green] [bold white]{chosen_move}[/bold white] "
+                        f"[dim](time: {move_time:.2f}s)[/dim]"
+                    )
 
                     # Submit move
                     response = self.make_request('/move', 'POST', {
@@ -480,7 +510,7 @@ class ChessClient:
                     move_obj = self.local_board.parse_san(chosen_move)
                     self.local_board.push(move_obj)
 
-                    print("\nBoard after move:")
+                    console.print(f"\n[bold cyan]Game: {self.game_id}[/bold cyan] [dim](waiting for opponent)[/dim]")
                     print(response.get('rendered', ''))
 
                     move_count += 1
@@ -491,10 +521,10 @@ class ChessClient:
                 time.sleep(0.5)
 
             except KeyboardInterrupt:
-                print("\nClient stopped by user")
+                console.print("\n[yellow]⚠ Client stopped by user[/yellow]")
                 break
             except Exception as e:
-                print(f"Error: {e}")
+                console.print(f"[red]✗ Error:[/red] {e}")
                 time.sleep(1)
 
 
@@ -507,8 +537,10 @@ def main() -> None:
                         required=True, help='Player color (w/W/white or b/B/black)')
     parser.add_argument('--search-time', type=float, default=5.0,
                         help='Maximum search time per move in seconds (default: 5.0)')
-    parser.add_argument('--port', type=int, default=9001,
-                        help='Server port (default: 9001)')
+    parser.add_argument('--port', type=int, default=9002,
+                        help='Server port (default: 9002)')
+    parser.add_argument('--game-id', type=str, default=None,
+                        help='Game ID to join existing game (if not provided, creates new game)')
 
     args = parser.parse_args()
 
@@ -517,7 +549,7 @@ def main() -> None:
 
     server_url = f"http://localhost:{args.port}"
 
-    client = ChessClient(server_url, player_color, args.search_time)
+    client = ChessClient(server_url, player_color, args.search_time, args.game_id)
     client.run()
 
 

@@ -1,51 +1,92 @@
 """FastAPI server for chess arena application."""
 
+import uuid
 from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from chess_arena.board import ChessBoard
+from chess_arena.persistence import load_games, save_games
 from chess_arena.renderer import BoardRenderer
 
 app = FastAPI(title="Chess Arena API", version="1.0.0")
-game_board = ChessBoard()
+games: Dict[str, ChessBoard] = {}
 
 
-def print_board() -> None:
+def get_game_board(game_id: str) -> ChessBoard:
+    """
+    Retrieve a game board by game ID.
+
+    :param game_id: The unique game identifier
+    :type game_id: str
+    :return: ChessBoard instance for the game
+    :rtype: ChessBoard
+    :raises HTTPException: If game_id is not found
+    """
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail=f"Game '{game_id}' not found")
+    return games[game_id]
+
+
+def print_board(game_board: ChessBoard, game_id: str) -> None:
     """
     Print the current board state to the terminal.
 
-    Displays the board using the TUI renderer.
+    :param game_board: ChessBoard instance to print
+    :type game_board: ChessBoard
+    :param game_id: The game identifier
+    :type game_id: str
     """
     board_state = game_board.get_board_state()
     rendered = BoardRenderer.render(board_state)
-    print("\n" + rendered + "\n")
+    print(f"\n[Game: {game_id}]")
+    print(rendered + "\n")
+
+
+def persist_games() -> None:
+    """Save all game states to disk."""
+    save_games(games)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """
-    Handle application startup event.
+    """Handle application startup event."""
+    global games
+    games = load_games()
+    loaded_count = len(games)
 
-    Displays the initial board state when the server starts.
-    """
     print("\n" + "=" * 50)
     print("Chess Arena Server Started")
+    print("Multi-game support enabled")
+    print(f"Loaded {loaded_count} persisted game(s)")
     print("=" * 50)
-    print_board()
+
+
+class NewGameResponse(BaseModel):
+    """
+    Response model for new game creation.
+
+    :param game_id: Unique identifier for the new game
+    :type game_id: str
+    """
+
+    game_id: str
 
 
 class MoveRequest(BaseModel):
     """
     Request model for making a chess move.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :param move: Move in standard algebraic notation
     :type move: str
     :param player: Player making the move ('white' or 'black')
     :type player: str
     """
 
+    game_id: str
     move: str
     player: str
 
@@ -54,11 +95,25 @@ class ReplayRequest(BaseModel):
     """
     Request model for replaying a PGN game.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :param pgn: PGN notation string containing the game moves
     :type pgn: str
     """
 
+    game_id: str
     pgn: str
+
+
+class ResetRequest(BaseModel):
+    """
+    Request model for resetting a game.
+
+    :param game_id: The game identifier
+    :type game_id: str
+    """
+
+    game_id: str
 
 
 class BoardResponse(BaseModel):
@@ -123,14 +178,32 @@ class LegalMovesResponse(BaseModel):
     legal_moves: List[str]
 
 
+@app.post("/newgame", response_model=NewGameResponse)
+def create_new_game() -> NewGameResponse:
+    """
+    Create a new chess game.
+
+    :return: New game identifier
+    :rtype: NewGameResponse
+    """
+    game_id = str(uuid.uuid4())
+    games[game_id] = ChessBoard()
+    persist_games()
+    print(f"\n[New game created: {game_id}]")
+    return NewGameResponse(game_id=game_id)
+
+
 @app.get("/board", response_model=BoardResponse)
-def get_board() -> BoardResponse:
+def get_board(game_id: str) -> BoardResponse:
     """
     Get the current state of the chess board.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :return: Current board state with rendering
     :rtype: BoardResponse
     """
+    game_board = get_game_board(game_id)
     board_state = game_board.get_board_state()
     rendered = BoardRenderer.render(board_state)
     return BoardResponse(
@@ -143,25 +216,31 @@ def get_board() -> BoardResponse:
 
 
 @app.get("/coordinates", response_model=CoordinatesResponse)
-def get_coordinates() -> CoordinatesResponse:
+def get_coordinates(game_id: str) -> CoordinatesResponse:
     """
     Get all piece coordinates on the board.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :return: Dictionary of square coordinates to piece symbols
     :rtype: CoordinatesResponse
     """
+    game_board = get_game_board(game_id)
     coordinates = game_board.get_all_coordinates()
     return CoordinatesResponse(coordinates=coordinates)
 
 
 @app.get("/turn", response_model=TurnResponse)
-def get_turn() -> TurnResponse:
+def get_turn(game_id: str) -> TurnResponse:
     """
     Get whose turn it is to move.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :return: Current player's turn with game over status
     :rtype: TurnResponse
     """
+    game_board = get_game_board(game_id)
     turn = game_board.get_current_turn()
     return TurnResponse(
         turn=turn,
@@ -171,13 +250,16 @@ def get_turn() -> TurnResponse:
 
 
 @app.get("/legal-moves", response_model=LegalMovesResponse)
-def get_legal_moves() -> LegalMovesResponse:
+def get_legal_moves(game_id: str) -> LegalMovesResponse:
     """
     Get all legal moves in the current position.
 
+    :param game_id: The game identifier
+    :type game_id: str
     :return: List of legal moves in algebraic notation
     :rtype: LegalMovesResponse
     """
+    game_board = get_game_board(game_id)
     legal_moves = game_board.get_legal_moves()
     return LegalMovesResponse(legal_moves=legal_moves)
 
@@ -187,12 +269,13 @@ def make_move(move_request: MoveRequest) -> BoardResponse:
     """
     Make a move on the chess board.
 
-    :param move_request: Move request containing algebraic notation
+    :param move_request: Move request containing game_id and algebraic notation
     :type move_request: MoveRequest
     :return: Updated board state
     :rtype: BoardResponse
     :raises HTTPException: If the move is invalid or wrong player's turn
     """
+    game_board = get_game_board(move_request.game_id)
     current_turn = game_board.get_current_turn()
     if move_request.player != current_turn:
         raise HTTPException(
@@ -212,8 +295,9 @@ def make_move(move_request: MoveRequest) -> BoardResponse:
         )
         raise HTTPException(status_code=400, detail=detail_msg)
 
-    print(f"\nMove: {move_request.move}")
-    print_board()
+    persist_games()
+    print(f"\n[Game: {move_request.game_id}] Move: {move_request.move}")
+    print_board(game_board, move_request.game_id)
 
     board_state = game_board.get_board_state()
     rendered = BoardRenderer.render(board_state)
@@ -231,18 +315,20 @@ def replay_game(replay_request: ReplayRequest) -> BoardResponse:
     """
     Replay a chess game from PGN notation.
 
-    :param replay_request: Request containing PGN notation
+    :param replay_request: Request containing game_id and PGN notation
     :type replay_request: ReplayRequest
     :return: Final board state after replay
     :rtype: BoardResponse
     :raises HTTPException: If PGN replay fails
     """
+    game_board = get_game_board(replay_request.game_id)
     success = game_board.replay_pgn(replay_request.pgn)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to replay PGN")
 
-    print("\nPGN Game Replayed")
-    print_board()
+    persist_games()
+    print(f"\n[Game: {replay_request.game_id}] PGN Game Replayed")
+    print_board(game_board, replay_request.game_id)
 
     board_state = game_board.get_board_state()
     rendered = BoardRenderer.render(board_state)
@@ -256,17 +342,21 @@ def replay_game(replay_request: ReplayRequest) -> BoardResponse:
 
 
 @app.post("/reset", response_model=BoardResponse)
-def reset_board() -> BoardResponse:
+def reset_board(reset_request: ResetRequest) -> BoardResponse:
     """
     Reset the chess board to the starting position.
 
+    :param reset_request: Request containing game_id
+    :type reset_request: ResetRequest
     :return: Board state at starting position
     :rtype: BoardResponse
     """
+    game_board = get_game_board(reset_request.game_id)
     game_board.reset()
+    persist_games()
 
-    print("\nBoard Reset to Starting Position")
-    print_board()
+    print(f"\n[Game: {reset_request.game_id}] Board Reset to Starting Position")
+    print_board(game_board, reset_request.game_id)
 
     board_state = game_board.get_board_state()
     rendered = BoardRenderer.render(board_state)
