@@ -21,7 +21,84 @@ from rich.console import Console
 from strategy import Strategy
 from strategy_base import StrategyBase
 
+# Color configuration for board display
+BG_COLOR = "grey23"
+WHITE_PIECE_COLOR = "bold white"
+WHITE_PIECE_COLOR_BG = "black"
+BLACK_PIECE_COLOR = "black"
+BLACK_PIECE_COLOR_BG = "white"
+BORDER_COLOR = "cyan"
+RANK_FILE_COLOR = "cyan"
+
+# Unicode chess piece symbols
+PIECE_SYMBOLS = {
+    'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
+    'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙',
+    ' ': ' '
+}
+USE_PIECE_SYMBOLS = False
+
 console = Console()
+
+
+def board_pretty_print(board: chess.Board) -> None:
+    """
+    Print a pretty chess board with Unicode pieces and colored display.
+
+    :param board: Chess board to display
+    :type board: chess.Board
+    """
+    board_state = []
+    for rank in range(7, -1, -1):
+        row = []
+        for file in range(8):
+            square = chess.square(file, rank)
+            piece = board.piece_at(square)
+            if piece:
+                symbol = piece.symbol()
+                row.append(symbol)
+            else:
+                row.append(' ')
+        board_state.append(row)
+
+    # Print top border
+    console.print(f"[{BORDER_COLOR}] +---+---+---+---+---+---+---+---+[/{BORDER_COLOR}]")
+
+    # Print each rank
+    for rank_idx, row in enumerate(board_state):
+        rank_number = 8 - rank_idx
+        line_parts = [f"[{RANK_FILE_COLOR}]{rank_number}[/{RANK_FILE_COLOR}]"]
+
+        for piece_char in row:
+            unicode_piece = PIECE_SYMBOLS.get(piece_char, ' ') if USE_PIECE_SYMBOLS else piece_char
+            if piece_char.isupper():
+                # White pieces
+                piece_display = (
+                    f"[{WHITE_PIECE_COLOR} on {WHITE_PIECE_COLOR_BG}] {unicode_piece} "
+                    f"[/{WHITE_PIECE_COLOR} on {WHITE_PIECE_COLOR_BG}]"
+                )
+            elif piece_char.islower():
+                # Black pieces
+                piece_display = (
+                    f"[{BLACK_PIECE_COLOR} on {BLACK_PIECE_COLOR_BG}] {unicode_piece} "
+                    f"[/{BLACK_PIECE_COLOR} on {BLACK_PIECE_COLOR_BG}]"
+                )
+            else:
+                # Empty square
+                piece_display = "   "
+
+            line_parts.append(f"[{BORDER_COLOR}]|[/{BORDER_COLOR}]")
+            line_parts.append(piece_display)
+
+        line_parts.append(f"[{BORDER_COLOR}]|[/{BORDER_COLOR}]")
+        console.print("".join(line_parts))
+
+        # Print horizontal border
+        console.print(f"[{BORDER_COLOR}] +---+---+---+---+---+---+---+---+[/{BORDER_COLOR}]")
+
+    # Print file letters
+    file_letters = "    a   b   c   d   e   f   g   h"
+    console.print(f"[{RANK_FILE_COLOR}]{file_letters}[/{RANK_FILE_COLOR}]")
 
 
 def load_auth_from_file(file_path: str) -> Optional[Tuple[str, str, str, str]]:
@@ -264,11 +341,32 @@ class ChessClient:
                         self.auth_token = msg["auth_token"]
                         self.player_color = msg["assigned_color"]
                         first_move_player = msg["first_move"]
+                        server_search_time = msg.get("server_search_time")
 
                         console.print("[green]✓ Match found![/green]")
                         console.print(f"[cyan]Game ID:[/cyan] [bold]{self.game_id}[/bold]")
                         console.print(f"[cyan]Player ID:[/cyan] [bold]{self.player_id}[/bold]")
                         console.print(f"[cyan]Color:[/cyan] [bold]{self.player_color}[/bold]")
+
+                        # Handle server-enforced search time
+                        if server_search_time is not None:
+                            console.print(f"[yellow]Server requires search time: {server_search_time}s[/yellow]")
+                            client_search_time = self.strategy.search_time
+
+                            if client_search_time < server_search_time:
+                                console.print(
+                                    f"[red bold]WARNING: You have selected a search time ({client_search_time}s) "
+                                    f"lower than the server's ({server_search_time}s)![/red bold]"
+                                )
+
+                            # Use minimum of client and server time
+                            final_search_time = min(client_search_time, server_search_time)
+                            if final_search_time != client_search_time:
+                                console.print(
+                                    f"[yellow]Using server's search time: {final_search_time}s "
+                                    f"(was {client_search_time}s)[/yellow]"
+                                )
+                                self.strategy.search_time = final_search_time
 
                         # Save auth token for reconnection
                         self.save_auth_token()
@@ -307,6 +405,13 @@ class ChessClient:
                         chosen_move = self.strategy.choose_move(self.local_board, legal_moves, self.player_color)
                         move_time = time.time() - move_start
 
+                        # Check if move took too long
+                        if move_time > self.strategy.search_time:
+                            console.print(
+                                f"[bold orange]⚠ WARNING: Move took {move_time:.2f}s, "
+                                f"exceeding time limit of {self.strategy.search_time:.2f}s![/bold orange]"
+                            )
+
                         console.print(
                             f"[bold green]➜ Chosen move:[/bold green] "
                             f"[bold white]{chosen_move}[/bold white] [dim](time: {move_time:.2f}s)[/dim]"
@@ -335,9 +440,9 @@ class ChessClient:
                             if fen:
                                 self.local_board.set_fen(fen)
 
-                            rendered = msg.get("rendered", "")
-                            if rendered:
-                                print("\n" + rendered)
+                            # Display board
+                            console.print()
+                            board_pretty_print(self.local_board)
 
                             if msg.get("game_over"):
                                 console.print("\n[bold red]Game over![/bold red]")
@@ -418,6 +523,17 @@ class ChessClient:
                                 else:
                                     console.print("[red]✗ You lost by forfeit[/red]")
                                     console.print("[bold red]I lost :([/bold red]")
+                            elif status == "disqualified":
+                                winner = msg.get("winner")
+                                disqualified_player = msg.get("disqualified_player")
+                                reason = msg.get("reason", "Time limit exceeded")
+                                console.print(f"[red]Disqualification reason: {reason}[/red]")
+                                if disqualified_player == self.player_id:
+                                    console.print("[red bold]✗ You were disqualified![/red bold]")
+                                    console.print("[bold red]I lost :([/bold red]")
+                                else:
+                                    console.print("[green]✓ You win by opponent disqualification![/green]")
+                                    console.print("[bold green]I won :)[/bold green]")
                             game_over = True
 
                         elif msg_type == "error":

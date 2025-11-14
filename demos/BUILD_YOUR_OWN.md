@@ -28,23 +28,25 @@ This guide explains how to create your own chess AI by implementing a custom `St
 3. Create a class that inherits from `StrategyBase`
 4. Implement the `choose_move()` method
 5. Return a move in SAN notation (e.g., `"e4"`, `"Nf3"`, `"O-O"`)
+6. Change chess_client to import from your new file
+    ```py
+    # from strategy import Strategy  <-- comment out
+    from my_strategy import Strategy # add 
+    ```
 
 That's it! The Chess Arena client handles all networking, game management, and board synchronization.
 
-### ⚠️ Performance Considerations: Time Limits Are Critical!
+### ⚠️ IMPORTANT: Server may have a time limit!
 
-**IMPORTANT**: Server may have a time limit!
+There may be a **strict time limit** per move.  <font color=orange>You could be disqualified</font> for going over it! 
 
-There may be a **strict time limit** per move.  You can simulate this with the `--search-time` parameter:
+You can simulate this with the `--search-time` parameter:
 
 ```bash
 python demos/chess_client.py --search-time 5.0  # 5 seconds per move
 ```
 
-Use this parameter to make sure your strategies are able to return a result under the time limit.
-
-<font color=orange>**If your strategy takes too long, the server may disqualify you or you could forfeit the game!**</font>
-
+Use this parameter to make sure your strategies are able to return a result under the time limit.  See [Time Management Example](#time-management-example)
 
 ## Understanding Standard Algebraic Notation (SAN)
 
@@ -191,7 +193,7 @@ class StrategyBase(ABC):
 
 1. **Inheritance**: Your strategy class must inherit from `StrategyBase`
    ```python
-   class MyStrategy(StrategyBase):
+   class Strategy(StrategyBase):
        pass
    ```
 
@@ -599,63 +601,7 @@ def choose_move(self, board, legal_moves, player_color):
     return move
 ```
 
-**Test specific positions:**
-```python
-# In your strategy or a test file:
-board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
-legal_moves = [board.san(m) for m in board.legal_moves]
-strategy = MyStrategy(search_time=5.0)
-chosen = strategy.choose_move(board, legal_moves, "black")
-print(f"Strategy chose: {chosen}")
-```
 
----
-
-## Testing Your Strategy
-
-### Unit Tests
-
-Create a test file in `tests/test_my_strategy.py`:
-
-```python
-import sys
-from pathlib import Path
-import chess
-import pytest
-
-# Add demos directory to path
-demos_path = Path(__file__).parent.parent / "demos"
-sys.path.insert(0, str(demos_path))
-
-from my_strategy import MyStrategy
-
-
-class TestMyStrategy:
-    def test_returns_legal_move(self):
-        """Test that strategy returns a valid legal move."""
-        strategy = MyStrategy(search_time=1.0)
-        board = chess.Board()
-        legal_moves = ["e4", "d4", "Nf3"]
-
-        chosen = strategy.choose_move(board, legal_moves, "white")
-
-        assert chosen in legal_moves
-
-    def test_handles_single_move(self):
-        """Test strategy when only one move is legal."""
-        strategy = MyStrategy(search_time=1.0)
-        board = chess.Board()
-        legal_moves = ["e4"]  # Only option
-
-        chosen = strategy.choose_move(board, legal_moves, "white")
-
-        assert chosen == "e4"
-```
-
-Run tests:
-```bash
-pytest tests/test_my_strategy.py -v
-```
 
 ### Play Against Itself
 
@@ -663,12 +609,12 @@ Run two clients simultaneously to watch your strategy play:
 
 **Terminal 1:**
 ```bash
-python demos/chess_client.py --search-time 2.0
+python demos/chess_client.py --search-time 1.0 --auth-file .player1
 ```
 
 **Terminal 2:**
 ```bash
-python demos/chess_client.py --search-time 2.0
+python demos/chess_client.py --search-time 5.0 --auth-file .player2
 ```
 
 ### Play Against Other Strategies
@@ -710,7 +656,7 @@ import chess
 from strategy_base import StrategyBase
 
 
-class MyStrategy(StrategyBase):
+class Strategy(StrategyBase):
     """
     Describe what your strategy does here.
 

@@ -16,7 +16,7 @@ import chess
 from strategy_base import StrategyBase
 
 
-class RandomStrategy(StrategyBase):
+class Strategy(StrategyBase):
     """
     A naive strategy that randomly selects from available legal moves.
 
