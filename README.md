@@ -1,6 +1,26 @@
-# Chess Arenagit 
+# Chess Arena for Python
 
-A FastAPI-based chess server with WebSocket support, real-time matchmaking, and TUI rendering.
+A FastAPI-based chess server with WebSocket support, real-time matchmaking, and TUI rendering.  
+
+Designed to be used as a teaching tool or as a easy-to-use framework to let LLMs create their own chess code and strategies.
+
+## Quick Start
+Install uv: https://docs.astral.sh/uv/getting-started/installation/
+
+Install server:
+```
+uv tool install git+https://github.com/eleqtrizit/Chess-Arena-for-Python
+```
+
+Run server:
+```
+chess-arena
+```
+
+## Now Make a Client!
+
+See [demos/BUILD_YOUR_OWN.md](demos/BUILD_YOUR_OWN.md) for instructions on building your own chess client.  You can also feed BUILD_YOUR_OWN.md to an LLM as a prompt.
+
 
 ## Features
 
@@ -40,9 +60,6 @@ The server will start on `http://localhost:9002`
 
 Visit `http://localhost:9002/docs` for interactive API documentation.
 
-## Make a Client
-
-See [demos/BUILD_YOUR_OWN.md](demos/BUILD_YOUR_OWN.md) for instructions on building your own chess client.
 
 ## Architecture
 
