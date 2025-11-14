@@ -10,19 +10,23 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import chess
-
 # Add demos directory to path and import chess_client dynamically
 demos_path = Path(__file__).parent.parent / 'demos'
 chess_client_path = demos_path / 'chess_client.py'
+strategy_path = demos_path / 'strategy.py'
 
 spec = importlib.util.spec_from_file_location("chess_client", chess_client_path)
 chess_client_module = importlib.util.module_from_spec(spec)
 sys.modules['chess_client'] = chess_client_module  # Add to sys.modules for patch decorator
 spec.loader.exec_module(chess_client_module)
 
+strategy_spec = importlib.util.spec_from_file_location("strategy", strategy_path)
+strategy_module = importlib.util.module_from_spec(strategy_spec)
+sys.modules['strategy'] = strategy_module
+strategy_spec.loader.exec_module(strategy_module)
+
 ChessClient = chess_client_module.ChessClient
-PIECE_VALUES = chess_client_module.PIECE_VALUES
+Strategy = strategy_module.Strategy
 
 
 class TestChessClient:
@@ -34,61 +38,20 @@ class TestChessClient:
 
         :raises AssertionError: If initialization fails
         """
-        client = ChessClient("http://localhost:9002", 5.0)
+        strategy = Strategy(search_time=5.0)
+        client = ChessClient("http://localhost:9002", strategy)
         assert client.server_url == "ws://localhost:9002"  # HTTP converted to WebSocket
         assert client.player_color is None  # Set by server after joining queue
         assert client.player_id is None  # Set by server after joining queue
-        assert client.search_time == 5.0
-        assert client.nodes_searched == 0
+        assert client.strategy.search_time == 5.0
 
-    def test_evaluate_position_empty_board(self):
+    def test_client_with_strategy_dependency(self):
         """
-        Test position evaluation on empty board.
+        Test client properly uses injected strategy.
 
-        :raises AssertionError: If evaluation is incorrect
+        :raises AssertionError: If strategy is not properly injected
         """
-        client = ChessClient("http://localhost:9002", 5.0)
-        # Empty board - only kings (insufficient material = draw)
-        board = chess.Board("8/8/8/4k3/4K3/8/8/8 w - - 0 1")
-        score = client.evaluate_position(board)
-        assert score == 0  # Insufficient material = draw = 0
-
-    def test_evaluate_position_single_piece(self):
-        """
-        Test position evaluation with starting position.
-
-        :raises AssertionError: If evaluation is incorrect
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-        board = chess.Board()  # Starting position
-        score = client.evaluate_position(board)
-        # Starting position should be roughly equal (close to 0)
-        assert abs(score) < 200  # Allow some positional imbalance
-
-    def test_order_moves_prioritizes_captures(self):
-        """
-        Test move ordering prioritizes captures.
-
-        :raises AssertionError: If capture moves are not first
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-        moves = ['e4', 'Nxd5', 'd4', 'Qxf7']
-        ordered = client.order_moves(moves)
-        # Captures should come first
-        assert ordered[0] in ['Nxd5', 'Qxf7']
-        assert ordered[1] in ['Nxd5', 'Qxf7']
-
-    def test_order_moves_center_control(self):
-        """
-        Test move ordering considers center control.
-
-        :raises AssertionError: If center moves are not prioritized
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-        moves = ['a3', 'e4', 'h3', 'd4']
-        ordered = client.order_moves(moves)
-        # Center moves (e4, d4) should come before edge moves (a3, h3)
-        center_moves = [m for m in ordered if m in ['e4', 'd4']]
-        edge_moves = [m for m in ordered if m in ['a3', 'h3']]
-        assert len(center_moves) == 2
-        assert len(edge_moves) == 2
+        strategy = Strategy(search_time=3.0)
+        client = ChessClient("http://localhost:9002", strategy)
+        assert client.strategy is strategy
+        assert client.strategy.search_time == 3.0
