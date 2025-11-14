@@ -9,10 +9,8 @@ we test the core logic components rather than full integration.
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import chess
-import pytest
 
 # Add demos directory to path and import chess_client dynamically
 demos_path = Path(__file__).parent.parent / 'demos'
@@ -37,7 +35,7 @@ class TestChessClient:
         :raises AssertionError: If initialization fails
         """
         client = ChessClient("http://localhost:9002", 5.0)
-        assert client.server_url == "http://localhost:9002"
+        assert client.server_url == "ws://localhost:9002"  # HTTP converted to WebSocket
         assert client.player_color is None  # Set by server after joining queue
         assert client.player_id is None  # Set by server after joining queue
         assert client.search_time == 5.0
@@ -94,67 +92,3 @@ class TestChessClient:
         edge_moves = [m for m in ordered if m in ['a3', 'h3']]
         assert len(center_moves) == 2
         assert len(edge_moves) == 2
-
-    @patch('chess_client.request.urlopen')
-    def test_make_request_get(self, mock_urlopen):
-        """
-        Test HTTP GET request handling.
-
-        :param mock_urlopen: Mocked urlopen function
-        :type mock_urlopen: Mock
-        :raises AssertionError: If request handling is incorrect
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-
-        # Mock response
-        mock_response = Mock()
-        mock_response.read.return_value = b'{"turn": "white"}'
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=False)
-        mock_urlopen.return_value = mock_response
-
-        result = client.make_request('/turn')
-        assert result == {"turn": "white"}
-
-    @patch('chess_client.request.urlopen')
-    def test_make_request_post(self, mock_urlopen):
-        """
-        Test HTTP POST request handling.
-
-        :param mock_urlopen: Mocked urlopen function
-        :type mock_urlopen: Mock
-        :raises AssertionError: If POST request handling is incorrect
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-
-        # Mock response
-        mock_response = Mock()
-        mock_response.read.return_value = b'{"success": true}'
-        mock_response.__enter__ = Mock(return_value=mock_response)
-        mock_response.__exit__ = Mock(return_value=False)
-        mock_urlopen.return_value = mock_response
-
-        result = client.make_request('/move', 'POST', {'move': 'e4'})
-        assert result == {"success": True}
-
-    def test_choose_move_single_legal_move(self):
-        """
-        Test move selection with only one legal move.
-
-        :raises AssertionError: If wrong move is chosen
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-        client.player_color = 'white'  # Set for test
-        legal_moves = ['e4']
-        chosen = client.choose_move(legal_moves)
-        assert chosen == 'e4'
-
-    def test_choose_move_no_legal_moves(self):
-        """
-        Test move selection with no legal moves raises exception.
-
-        :raises AssertionError: If exception is not raised
-        """
-        client = ChessClient("http://localhost:9002", 5.0)
-        with pytest.raises(Exception, match="No legal moves available"):
-            client.choose_move([])

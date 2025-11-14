@@ -31,57 +31,82 @@ class PlayerMatchResult:
     player_mappings: Dict[str, str]
 
 
+@dataclass
+class QueueEntry:
+    """
+    Represents a player waiting in queue.
+
+    :param connection_id: WebSocket connection identifier
+    :type connection_id: str
+    :param future: Future to notify when match is found
+    :type future: asyncio.Future
+    """
+
+    connection_id: str
+    future: asyncio.Future
+
+
 class MatchmakingQueue:
     """
     Manages matchmaking queue for chess games.
 
     Pairs waiting players and creates games with randomly assigned colors.
+    Prevents same connection from matching with itself.
     """
 
     def __init__(self) -> None:
         """Initialize the matchmaking queue."""
-        self.waiting_player: Optional[asyncio.Future] = None
+        self.waiting_player: Optional[QueueEntry] = None
         self.lock = asyncio.Lock()
 
-    async def join_queue(self, timeout: float = 60.0) -> Optional[PlayerMatchResult]:
+    async def join_queue(self, connection_id: str, timeout: float = 60.0) -> Optional[PlayerMatchResult]:
         """
         Join the matchmaking queue and wait for an opponent.
 
+        :param connection_id: WebSocket connection identifier
+        :type connection_id: str
         :param timeout: Maximum time to wait in seconds
         :type timeout: float
         :return: PlayerMatchResult if matched with player-specific info, None if timeout occurred
         :rtype: Optional[PlayerMatchResult]
         """
-        future: Optional[asyncio.Future] = None
+        queue_entry: Optional[QueueEntry] = None
 
         async with self.lock:
             if self.waiting_player is None:
                 # First player - create future and wait
-                self.waiting_player = asyncio.Future()
-                future = self.waiting_player
-            elif self.waiting_player and not self.waiting_player.done():
-                # Second player - create match and notify both players with their specific info
+                future: asyncio.Future = asyncio.Future()
+                self.waiting_player = QueueEntry(connection_id=connection_id, future=future)
+                queue_entry = self.waiting_player
+            elif self.waiting_player and not self.waiting_player.future.done():
+                # Check if same connection trying to match with itself
+                if self.waiting_player.connection_id == connection_id:
+                    # Same connection - don't match with self, timeout immediately
+                    return None
+
+                # Second player - create match and notify both players
                 player1_result, player2_result = self._create_match()
 
                 # Notify waiting player with their result
-                self.waiting_player.set_result(player1_result)
+                self.waiting_player.future.set_result(player1_result)
                 self.waiting_player = None
 
                 # Return result for second player
                 return player2_result
             else:
                 # Race condition - waiting player left, become waiting player
-                self.waiting_player = asyncio.Future()
-                future = self.waiting_player
+                future_new: asyncio.Future = asyncio.Future()
+                self.waiting_player = QueueEntry(connection_id=connection_id, future=future_new)
+                queue_entry = self.waiting_player
 
         # Wait for another player
-        if future:
+        if queue_entry:
             try:
-                result = await asyncio.wait_for(future, timeout=timeout)
+                result = await asyncio.wait_for(queue_entry.future, timeout=timeout)
                 return result
             except asyncio.TimeoutError:
                 async with self.lock:
-                    if self.waiting_player is future:
+                    if self.waiting_player is queue_entry:
                         self.waiting_player = None
                 return None
 

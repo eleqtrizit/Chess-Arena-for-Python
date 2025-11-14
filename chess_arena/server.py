@@ -1,12 +1,14 @@
 """FastAPI server for chess arena application."""
 
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from chess_arena.board import ChessBoard
+from chess_arena.connection_manager import ConnectionManager
+from chess_arena.game_session import GameSessionManager
 from chess_arena.persistence import load_games, save_games
 from chess_arena.queue import MatchmakingQueue
 from chess_arena.renderer import BoardRenderer
@@ -14,6 +16,8 @@ from chess_arena.renderer import BoardRenderer
 app = FastAPI(title="Chess Arena API", version="1.0.0")
 games: Dict[str, ChessBoard] = {}
 matchmaking_queue = MatchmakingQueue()
+connection_manager = ConnectionManager()
+game_session_manager = GameSessionManager(connection_manager)
 
 
 def get_game_board(game_id: str) -> ChessBoard:
@@ -221,42 +225,9 @@ def create_new_game() -> NewGameResponse:
     return NewGameResponse(game_id=game_id)
 
 
-@app.post("/queue", response_model=QueueResponse)
-async def join_matchmaking_queue() -> QueueResponse:
-    """
-    Join the matchmaking queue and wait for an opponent.
-
-    Waits up to 60 seconds for another player to join. Once matched,
-    both players receive a game_id, their player_id, assigned color,
-    and who moves first.
-
-    :return: Match details or timeout indication
-    :rtype: QueueResponse
-    """
-    match_result = await matchmaking_queue.join_queue(timeout=60.0)
-
-    if match_result is None:
-        return QueueResponse(no_challengers=True)
-
-    # Check if game already exists (second player matched)
-    if match_result.game_id not in games:
-        # First player to get result - create the game
-        game_board = ChessBoard(player_mappings=match_result.player_mappings)
-        games[match_result.game_id] = game_board
-        persist_games()
-
-        player_ids = list(match_result.player_mappings.keys())
-        print(f"\n[Match created: {match_result.game_id}]")
-        print(f"[Players: {player_ids[0]} ({match_result.player_mappings[player_ids[0]]}) vs "
-              f"{player_ids[1]} ({match_result.player_mappings[player_ids[1]]})]")
-
-    return QueueResponse(
-        game_id=match_result.game_id,
-        player_id=match_result.player_id,
-        assigned_color=match_result.assigned_color,
-        first_move=match_result.first_move,
-        no_challengers=False
-    )
+# Old HTTP queue endpoint - replaced by WebSocket /ws endpoint
+# Kept for backward compatibility but requires connection_id parameter
+# Clients should use WebSocket connection for proper matchmaking
 
 
 @app.get("/board", response_model=BoardResponse)
@@ -455,6 +426,241 @@ def reset_board(reset_request: ResetRequest) -> BoardResponse:
         game_over=game_board.is_game_over(),
         game_over_reason=game_board.get_game_over_reason()
     )
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    """
+    WebSocket endpoint for real-time chess game communication.
+
+    Handles matchmaking, moves, and disconnect notifications.
+
+    :param websocket: WebSocket connection
+    :type websocket: WebSocket
+    """
+    connection_id = await connection_manager.connect(websocket)
+    player_id: Optional[str] = None
+    game_id: Optional[str] = None
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            message_type = data.get("type")
+
+            if message_type == "join_queue":
+                # Join matchmaking queue
+                match_result = await matchmaking_queue.join_queue(connection_id, timeout=60.0)
+
+                if match_result is None:
+                    await connection_manager.send_message(connection_id, {
+                        "type": "queue_timeout",
+                        "message": "No opponent found"
+                    })
+                else:
+                    # Match found
+                    game_id = match_result.game_id
+                    player_id = match_result.player_id
+
+                    # Create the game if it doesn't exist yet
+                    if game_id not in games:
+                        games[game_id] = ChessBoard(player_mappings=match_result.player_mappings)
+                        persist_games()
+                        print(f"\n[New matchmade game created: {game_id}]")
+                        print_board(games[game_id], game_id)
+
+                    # Store connection info
+                    connection_manager.set_game_info(connection_id, game_id, player_id)
+
+                    # Generate auth token for this player
+                    auth_token = connection_manager.generate_auth_token(game_id, player_id)
+
+                    # Create game session tracking
+                    game_connections = connection_manager.get_game_connections(game_id)
+                    if len(game_connections) == 2:
+                        # Both players connected, create session
+                        await game_session_manager.create_session(game_id, {
+                            pid: cid for cid, pid in game_connections.items()
+                        })
+
+                    # Send match found response with auth token
+                    await connection_manager.send_message(connection_id, {
+                        "type": "match_found",
+                        "game_id": game_id,
+                        "player_id": player_id,
+                        "auth_token": auth_token,
+                        "assigned_color": match_result.assigned_color,
+                        "first_move": match_result.first_move
+                    })
+
+            elif message_type == "make_move":
+                # Handle move
+                move_data = data.get("data", {})
+                move = move_data.get("move")
+                move_game_id = move_data.get("game_id")
+                move_player_id = move_data.get("player_id")
+                move_auth_token = move_data.get("auth_token")
+
+                if not all([move, move_game_id, move_player_id, move_auth_token]):
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": "Missing required fields: move, game_id, player_id, auth_token"
+                    })
+                    continue
+
+                # Validate auth token
+                if not connection_manager.validate_auth_token(move_game_id, move_player_id, move_auth_token):
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": "Invalid authentication token"
+                    })
+                    continue
+
+                try:
+                    game_board = get_game_board(move_game_id)
+                    current_turn = game_board.get_current_turn()
+
+                    # Validate turn
+                    if not game_board.is_players_turn(move_player_id):
+                        player_color = game_board.get_player_color(move_player_id)
+                        await connection_manager.send_message(connection_id, {
+                            "type": "error",
+                            "message": f"It is {current_turn}'s turn, not your turn (you are {player_color})"
+                        })
+                        continue
+
+                    # Make move
+                    success = game_board.make_move(move)
+                    if not success:
+                        legal_moves = game_board.get_legal_moves()
+                        await connection_manager.send_message(connection_id, {
+                            "type": "error",
+                            "message": f"Illegal move: {move}",
+                            "legal_moves": legal_moves
+                        })
+                        continue
+
+                    persist_games()
+                    print(f"\n[Game: {move_game_id}] Move: {move}")
+                    print_board(game_board, move_game_id)
+
+                    # Get updated board state
+                    board_state = game_board.get_board_state()
+                    rendered = BoardRenderer.render(board_state)
+
+                    move_response: Dict[str, Any] = {
+                        "type": "move_made",
+                        "game_id": move_game_id,
+                        "move": move,
+                        "board": board_state,
+                        "rendered": rendered,
+                        "fen": game_board.get_fen(),
+                        "game_over": game_board.is_game_over(),
+                        "game_over_reason": game_board.get_game_over_reason()
+                    }
+
+                    # Broadcast to both players
+                    await connection_manager.send_to_game(move_game_id, move_response)
+
+                except HTTPException as e:
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": str(e.detail)
+                    })
+
+            elif message_type == "get_board":
+                # Get current board state
+                board_game_id = data.get("game_id")
+                board_player_id = data.get("player_id")
+                board_auth_token = data.get("auth_token")
+
+                if not all([board_game_id, board_player_id, board_auth_token]):
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": "Missing required fields: game_id, player_id, auth_token"
+                    })
+                    continue
+
+                # Validate auth token
+                if not connection_manager.validate_auth_token(board_game_id, board_player_id, board_auth_token):
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": "Invalid authentication token"
+                    })
+                    continue
+
+                # Re-register this connection with the game (handles reconnection)
+                connection_manager.set_game_info(connection_id, board_game_id, board_player_id)
+                game_id = board_game_id
+                player_id = board_player_id
+
+                # Handle reconnection in game session
+                reconnect_success = await game_session_manager.handle_reconnect(
+                    connection_id, board_game_id, board_player_id
+                )
+                if reconnect_success:
+                    # Notify opponent of reconnection
+                    await connection_manager.send_to_game(board_game_id, {
+                        "type": "opponent_reconnected",
+                        "message": "Your opponent has reconnected",
+                        "reconnected_player_id": board_player_id
+                    }, exclude_connection=connection_id)
+
+                try:
+                    game_board = get_game_board(board_game_id)
+                    board_state = game_board.get_board_state()
+                    rendered = BoardRenderer.render(board_state)
+
+                    await connection_manager.send_message(connection_id, {
+                        "type": "board_state",
+                        "game_id": board_game_id,
+                        "board": board_state,
+                        "rendered": rendered,
+                        "fen": game_board.get_fen(),
+                        "current_turn": game_board.get_current_turn(),
+                        "game_over": game_board.is_game_over(),
+                        "game_over_reason": game_board.get_game_over_reason()
+                    })
+                except HTTPException as e:
+                    await connection_manager.send_message(connection_id, {
+                        "type": "error",
+                        "message": str(e.detail)
+                    })
+
+            elif message_type == "ping":
+                # Heartbeat
+                await connection_manager.send_message(connection_id, {
+                    "type": "pong"
+                })
+
+    except WebSocketDisconnect:
+        # Handle disconnect
+        await connection_manager.disconnect(connection_id)
+
+        if game_id and player_id:
+            disconnect_info = await game_session_manager.handle_disconnect(connection_id)
+
+            if disconnect_info:
+                status = disconnect_info.get("status")
+
+                if status == "disconnected":
+                    # Notify opponent
+                    await connection_manager.send_to_game(game_id, {
+                        "type": "opponent_disconnected",
+                        "message": "Your opponent has disconnected. Waiting 60s for reconnection...",
+                        "disconnected_player_id": disconnect_info["disconnected_player_id"]
+                    }, exclude_connection=connection_id)
+
+                elif status in ["forfeit", "cancelled"]:
+                    # Game ended
+                    await connection_manager.send_to_game(game_id, {
+                        "type": "game_over",
+                        "status": status,
+                        "winner": disconnect_info.get("winner"),
+                        "message": "Game cancelled" if status == "cancelled" else "Opponent forfeited"
+                    })
+
+                    # Clean up session
+                    await game_session_manager.remove_session(game_id)
 
 
 @app.get("/")

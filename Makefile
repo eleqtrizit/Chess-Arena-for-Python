@@ -33,5 +33,17 @@ build:  ## Build distribution packages
 	python -m build
 
 
-run:  ## Run the FastAPI server
+client1: ## start a client demo - player 1
+	python demos/chess_client.py --search-time 1 --auth-file .player1
+
+client2: ## start a client demo - player 2
+	python demos/chess_client.py --search-time 2 --auth-file .player2
+
+client1-continue: ## continue stopped client demo - player 1
+	python demos/chess_client.py --search-time 1 --auth-file .player1 --continue
+
+client2-continue: ## continue stopped client demo - player 2
+	python demos/chess_client.py --search-time 2 --auth-file .player2 --continue
+
+server:  ## Run the FastAPI server
 	python -m chess_arena
