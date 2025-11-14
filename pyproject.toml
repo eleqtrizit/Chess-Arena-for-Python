@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chess-arena"
 version = "0.1.0"
-description = "Add your description here"
+description = "Chess Arena server."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

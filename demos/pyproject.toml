@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chess-arena-client"
+version = "0.1.0"
+description = "Chess client for Chess Arena server."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "python-chess>=1.999",
+    "rich>=14.2.0",
+    "websockets>=13.0",
+]
+
+[project.scripts]
+chess-client = "chess_client.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["*"]
+
