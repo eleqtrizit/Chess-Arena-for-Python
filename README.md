@@ -1,4 +1,4 @@
-# Chess Arena
+# Chess Arenagit 
 
 A FastAPI-based chess server with WebSocket support, real-time matchmaking, and TUI rendering.
 
@@ -39,6 +39,10 @@ python -m chess_arena
 The server will start on `http://localhost:9002`
 
 Visit `http://localhost:9002/docs` for interactive API documentation.
+
+## Make a Client
+
+See [demos/BUILD_YOUR_OWN.md](demos/BUILD_YOUR_OWN.md) for instructions on building your own chess client.
 
 ## Architecture
 
