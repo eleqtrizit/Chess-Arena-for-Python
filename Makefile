@@ -45,5 +45,8 @@ client1-continue: ## continue stopped client demo - player 1
 client2-continue: ## continue stopped client demo - player 2
 	cd demos && python chess_client.py --search-time 2 --auth-file .player2 --continue
 
-server:  ## Run the FastAPI server
+server:  ## Start chess arena server
 	python -m chess_arena
+
+server-time-limited:  ## Start chess arena server with time limited search
+	python -m chess_arena --search-time 5.0

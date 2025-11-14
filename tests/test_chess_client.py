@@ -13,17 +13,26 @@ from pathlib import Path
 # Add demos directory to path and import chess_client dynamically
 demos_path = Path(__file__).parent.parent / 'demos'
 chess_client_path = demos_path / 'chess_client.py'
+strategy_base_path = demos_path / 'strategy_base.py'
 strategy_path = demos_path / 'strategy.py'
 
-spec = importlib.util.spec_from_file_location("chess_client", chess_client_path)
-chess_client_module = importlib.util.module_from_spec(spec)
-sys.modules['chess_client'] = chess_client_module  # Add to sys.modules for patch decorator
-spec.loader.exec_module(chess_client_module)
+# Load strategy_base first (dependency of strategy)
+strategy_base_spec = importlib.util.spec_from_file_location("strategy_base", strategy_base_path)
+strategy_base_module = importlib.util.module_from_spec(strategy_base_spec)
+sys.modules['strategy_base'] = strategy_base_module
+strategy_base_spec.loader.exec_module(strategy_base_module)
 
+# Load strategy
 strategy_spec = importlib.util.spec_from_file_location("strategy", strategy_path)
 strategy_module = importlib.util.module_from_spec(strategy_spec)
 sys.modules['strategy'] = strategy_module
 strategy_spec.loader.exec_module(strategy_module)
+
+# Load chess_client
+spec = importlib.util.spec_from_file_location("chess_client", chess_client_path)
+chess_client_module = importlib.util.module_from_spec(spec)
+sys.modules['chess_client'] = chess_client_module  # Add to sys.modules for patch decorator
+spec.loader.exec_module(chess_client_module)
 
 ChessClient = chess_client_module.ChessClient
 Strategy = strategy_module.Strategy

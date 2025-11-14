@@ -30,7 +30,7 @@ make install-prod
 
 ```bash
 # Start the FastAPI server
-make run
+make server
 
 # Or directly
 python -m chess_arena

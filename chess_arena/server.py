@@ -1,5 +1,7 @@
 """FastAPI server for chess arena application."""
 
+import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +20,12 @@ games: Dict[str, ChessBoard] = {}
 matchmaking_queue = MatchmakingQueue()
 connection_manager = ConnectionManager()
 game_session_manager = GameSessionManager(connection_manager)
+move_start_times: Dict[str, Dict[str, float]] = {}  # {game_id: {player_id: timestamp}}
+
+# Server-enforced search time (optional)
+SERVER_SEARCH_TIME: Optional[float] = None
+if "SEARCH_TIME" in os.environ and os.environ["SEARCH_TIME"] != "None":
+    SERVER_SEARCH_TIME = float(os.environ["SEARCH_TIME"])
 
 
 def get_game_board(game_id: str) -> ChessBoard:
@@ -66,6 +74,10 @@ def on_startup() -> None:
     print("Chess Arena Server Started")
     print("Multi-game support enabled")
     print(f"Loaded {loaded_count} persisted game(s)")
+
+    if SERVER_SEARCH_TIME is not None:
+        print(f"Search time limit enforced: {SERVER_SEARCH_TIME}s per move")
+
     print("=" * 50)
 
 
@@ -482,15 +494,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             pid: cid for cid, pid in game_connections.items()
                         })
 
+                        # Initialize timer for white's first move if SERVER_SEARCH_TIME is set
+                        if SERVER_SEARCH_TIME is not None:
+                            white_player_id = match_result.first_move
+                            if game_id not in move_start_times:
+                                move_start_times[game_id] = {}
+                            move_start_times[game_id][white_player_id] = time.time()
+
                     # Send match found response with auth token
-                    await connection_manager.send_message(connection_id, {
+                    match_message: Dict[str, Any] = {
                         "type": "match_found",
                         "game_id": game_id,
                         "player_id": player_id,
                         "auth_token": auth_token,
                         "assigned_color": match_result.assigned_color,
                         "first_move": match_result.first_move
-                    })
+                    }
+                    if SERVER_SEARCH_TIME is not None:
+                        match_message["server_search_time"] = SERVER_SEARCH_TIME
+                    await connection_manager.send_message(connection_id, match_message)
 
             elif message_type == "make_move":
                 # Handle move
@@ -528,6 +550,46 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         })
                         continue
 
+                    # Check time limit if SERVER_SEARCH_TIME is set
+                    if SERVER_SEARCH_TIME is not None:
+                        # Get the time when this player's turn started
+                        if move_game_id in move_start_times and move_player_id in move_start_times[move_game_id]:
+                            move_start = move_start_times[move_game_id][move_player_id]
+                            move_duration = time.time() - move_start
+
+                            if move_duration > SERVER_SEARCH_TIME:
+                                # Time limit violated - disqualify the player
+                                print(f"\n[Game: {move_game_id}] TIME VIOLATION: Player {move_player_id} "
+                                      f"took {move_duration:.2f}s (limit: {SERVER_SEARCH_TIME}s)")
+
+                                # Determine winner (the other player)
+                                player_color = game_board.get_player_color(move_player_id)
+                                winner_color = "black" if player_color == "white" else "white"
+                                winner_id = None
+                                for pid, color in game_board.player_mappings.items():
+                                    if color == winner_color:
+                                        winner_id = pid
+                                        break
+
+                                # Send disqualification message to both players
+                                await connection_manager.send_to_game(move_game_id, {
+                                    "type": "game_over",
+                                    "status": "disqualified",
+                                    "winner": winner_id,
+                                    "disqualified_player": move_player_id,
+                                    "reason": f"Time limit exceeded: {move_duration:.2f}s > {SERVER_SEARCH_TIME}s",
+                                    "message": f"Player {move_player_id} disqualified for exceeding time limit"
+                                })
+
+                                # Clean up session
+                                await game_session_manager.remove_session(move_game_id)
+
+                                # Clean up move tracking
+                                if move_game_id in move_start_times:
+                                    del move_start_times[move_game_id]
+
+                                continue
+
                     # Make move
                     success = game_board.make_move(move)
                     if not success:
@@ -557,6 +619,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         "game_over": game_board.is_game_over(),
                         "game_over_reason": game_board.get_game_over_reason()
                     }
+
+                    # Record start time for next player's turn if SERVER_SEARCH_TIME is set
+                    if SERVER_SEARCH_TIME is not None and not game_board.is_game_over():
+                        current_turn = game_board.get_current_turn()
+                        # Find the player_id for the current turn
+                        next_player_id = None
+                        for pid, color in game_board.player_mappings.items():
+                            if color == current_turn:
+                                next_player_id = pid
+                                break
+                        if next_player_id:
+                            if move_game_id not in move_start_times:
+                                move_start_times[move_game_id] = {}
+                            move_start_times[move_game_id][next_player_id] = time.time()
 
                     # Broadcast to both players
                     await connection_manager.send_to_game(move_game_id, move_response)

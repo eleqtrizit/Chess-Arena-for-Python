@@ -3,16 +3,31 @@
 Tests for the RandomStrategy example.
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
 import chess
 import pytest
-from strategy_example_random import RandomStrategy
 
-# Add demos directory to path for imports
+# Add demos directory to path and import dynamically
 demos_path = Path(__file__).parent.parent / "demos"
-sys.path.insert(0, str(demos_path))
+strategy_base_path = demos_path / "strategy_base.py"
+strategy_example_random_path = demos_path / "strategy_example_random.py"
+
+# Load strategy_base first (dependency)
+strategy_base_spec = importlib.util.spec_from_file_location("strategy_base", strategy_base_path)
+strategy_base_module = importlib.util.module_from_spec(strategy_base_spec)
+sys.modules["strategy_base"] = strategy_base_module
+strategy_base_spec.loader.exec_module(strategy_base_module)
+
+# Load strategy_example_random
+spec = importlib.util.spec_from_file_location("strategy_example_random", strategy_example_random_path)
+strategy_example_random_module = importlib.util.module_from_spec(spec)
+sys.modules["strategy_example_random"] = strategy_example_random_module
+spec.loader.exec_module(strategy_example_random_module)
+
+RandomStrategy = strategy_example_random_module.Strategy
 
 
 class TestRandomStrategy:
