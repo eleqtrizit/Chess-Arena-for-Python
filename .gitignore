@@ -13,6 +13,4 @@ uv.lock
 .mypy_cache
 .pytest_cache
 .claude
-.player1
-.player2
 .python-version
