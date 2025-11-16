@@ -17,9 +17,11 @@ Run server:
 chess-arena
 ```
 
+If you're only interested in building a chess bot, go straight to the client below.  Nothing further needs to be done here.
+
 ## Now Make a Client!
 
-See [demos/BUILD_YOUR_OWN.md](demos/BUILD_YOUR_OWN.md) for instructions on building your own chess client.  You can also feed BUILD_YOUR_OWN.md to an LLM as a prompt.
+See [Chess Arena Client](https://github.com/eleqtrizit/Chess-Arena-for-Python-Client) for instructions on building your own chess client or use the one provided!
 
 
 ## Features
@@ -175,47 +177,6 @@ Replay a complete chess game from PGN notation.
 #### POST /reset
 Reset the board to the starting position.
 
-## Demo Client
-
-An autonomous chess AI client that connects via WebSocket, joins the matchmaking queue, and plays complete games using minimax search with alpha-beta pruning.
-
-### Running the Demo Client
-
-```bash
-# Start a client (default 5 second search time)
-python demos/chess_client.py
-
-# Adjust search time per move
-python demos/chess_client.py --search-time 10.0
-
-# Connect to a different port
-python demos/chess_client.py --port 9002
-
-# Run two clients simultaneously to watch them play each other
-# Terminal 1:
-python demos/chess_client.py --search-time 5.0
-
-# Terminal 2:
-python demos/chess_client.py --search-time 5.0
-```
-
-### Client Features
-
-- **Automatic matchmaking**: Joins queue and waits for opponent
-- **WebSocket connection**: Maintains persistent connection throughout game
-- **Real-time updates**: Receives opponent moves instantly
-- **Disconnect resilience**: Notified if opponent disconnects
-- **AI Engine**:
-  - Material and position evaluation using piece-square tables
-  - Minimax search with alpha-beta pruning
-  - Iterative deepening for time management
-  - Move ordering (captures first, then center control)
-  - Search depth scales with available time
-
-### Client Options
-
-- `--search-time`: Maximum seconds to search for a move (default: `5.0`)
-- `--port`: Server port (default: `9002`)
 
 ### How Matchmaking Works
 
@@ -232,20 +193,6 @@ python demos/chess_client.py --search-time 5.0
    - Wins by forfeit if opponent doesn't reconnect
    - Game cancelled if both disconnect
 
-## Quick Start Example
-
-```bash
-# Terminal 1: Start the server
-make run
-
-# Terminal 2: Start first AI client
-python demos/chess_client.py --search-time 3.0
-
-# Terminal 3: Start second AI client
-python demos/chess_client.py --search-time 3.0
-
-# Watch them play a complete game!
-```
 
 ### REST API Usage (for non-matchmaking games)
 
