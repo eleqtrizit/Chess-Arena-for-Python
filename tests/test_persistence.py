@@ -1,6 +1,7 @@
 """Tests for game state persistence module."""
 
 import json
+import shutil
 
 import chess
 import pytest
@@ -15,12 +16,12 @@ def clean_persist_dir():
     if PERSIST_FILE.exists():
         PERSIST_FILE.unlink()
     if PERSIST_DIR.exists():
-        PERSIST_DIR.rmdir()
+        shutil.rmtree(PERSIST_DIR)
     yield
     if PERSIST_FILE.exists():
         PERSIST_FILE.unlink()
     if PERSIST_DIR.exists():
-        PERSIST_DIR.rmdir()
+        shutil.rmtree(PERSIST_DIR)
 
 
 def test_ensure_persist_dir(clean_persist_dir):

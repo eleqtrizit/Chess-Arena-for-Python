@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import chess
 
@@ -11,6 +11,7 @@ from chess_arena.board import ChessBoard
 
 PERSIST_DIR = Path("/tmp/chess_arena")
 PERSIST_FILE = PERSIST_DIR / "games.json"
+GAME_STATES_FILE = PERSIST_DIR / "game_states.jsonl"
 
 
 def ensure_persist_dir() -> None:
@@ -67,3 +68,27 @@ def load_games() -> Dict[str, ChessBoard]:
         return games
     except (json.JSONDecodeError, KeyError, ValueError):
         return {}
+
+
+def log_game_state(board: chess.Board, legal_moves: List[str], player_color: str) -> None:
+    """
+    Log game state, legal moves, and player color to JSONL file.
+
+    :param board: Current chess board state
+    :type board: chess.Board
+    :param legal_moves: List of legal moves in algebraic notation
+    :type legal_moves: List[str]
+    :param player_color: Color of the player to move ('white' or 'black')
+    :type player_color: str
+    """
+    ensure_persist_dir()
+
+    log_entry = {
+        "fen": board.fen(),
+        "legal_moves": legal_moves,
+        "player_color": player_color,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    with open(GAME_STATES_FILE, 'a') as f:
+        f.write(json.dumps(log_entry) + '\n')

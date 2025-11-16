@@ -12,6 +12,9 @@ def main() -> None:
 
     Runs the Chess Arena API server. Default configuration is host 0.0.0.0 and port 9002.
     Visit http://<host>:<port>/docs for API documentation.
+
+    Game states are automatically logged to /tmp/chess_arena/game_states.jsonl for testing.
+    Each entry contains: fen, legal_moves, player_color, and timestamp.
     """
     parser = argparse.ArgumentParser(description="Chess Arena API Server")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)")

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from chess_arena.board import ChessBoard
 from chess_arena.connection_manager import ConnectionManager
 from chess_arena.game_session import GameSessionManager
-from chess_arena.persistence import load_games, save_games
+from chess_arena.persistence import load_games, log_game_state, save_games
 from chess_arena.queue import MatchmakingQueue
 from chess_arena.renderer import BoardRenderer
 
@@ -354,6 +354,10 @@ def make_move(move_request: MoveRequest) -> BoardResponse:
             detail="Either player_id or player must be provided"
         )
 
+    # Log game state before move
+    legal_moves = game_board.get_legal_moves()
+    log_game_state(game_board.board, legal_moves, current_turn)
+
     success = game_board.make_move(move_request.move)
     if not success:
         legal_moves = game_board.get_legal_moves()
@@ -589,6 +593,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                     del move_start_times[move_game_id]
 
                                 continue
+
+                    # Log game state before move
+                    legal_moves = game_board.get_legal_moves()
+                    log_game_state(game_board.board, legal_moves, current_turn)
 
                     # Make move
                     success = game_board.make_move(move)
