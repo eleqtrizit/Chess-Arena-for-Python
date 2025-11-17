@@ -112,6 +112,24 @@ class MatchmakingQueue:
 
         return None
 
+    async def remove_from_queue(self, connection_id: str) -> bool:
+        """
+        Remove a player from the queue if they are waiting.
+
+        :param connection_id: Connection identifier to remove
+        :type connection_id: str
+        :return: True if player was removed, False if not in queue
+        :rtype: bool
+        """
+        async with self.lock:
+            if self.waiting_player and self.waiting_player.connection_id == connection_id:
+                # Cancel the waiting player's future
+                if not self.waiting_player.future.done():
+                    self.waiting_player.future.cancel()
+                self.waiting_player = None
+                return True
+            return False
+
     def _create_match(self) -> tuple[PlayerMatchResult, PlayerMatchResult]:
         """
         Create a new match between two players.

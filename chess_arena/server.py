@@ -720,6 +720,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         # Handle disconnect
         await connection_manager.disconnect(connection_id)
 
+        # Remove from matchmaking queue if still waiting
+        await matchmaking_queue.remove_from_queue(connection_id)
+
         if game_id and player_id:
             disconnect_info = await game_session_manager.handle_disconnect(connection_id)
 
