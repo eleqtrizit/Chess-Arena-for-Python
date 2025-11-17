@@ -4,7 +4,10 @@ import asyncio
 import random
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
+
+if TYPE_CHECKING:
+    from chess_arena.connection_manager import ConnectionManager
 
 
 @dataclass
@@ -54,10 +57,16 @@ class MatchmakingQueue:
     Prevents same connection from matching with itself.
     """
 
-    def __init__(self) -> None:
-        """Initialize the matchmaking queue."""
+    def __init__(self, connection_manager: Optional["ConnectionManager"] = None) -> None:
+        """
+        Initialize the matchmaking queue.
+
+        :param connection_manager: ConnectionManager to check if connections are still active
+        :type connection_manager: Optional[ConnectionManager]
+        """
         self.waiting_player: Optional[QueueEntry] = None
         self.lock = asyncio.Lock()
+        self.connection_manager = connection_manager
 
     async def join_queue(self, connection_id: str, timeout: float = 60.0) -> Optional[PlayerMatchResult]:
         """

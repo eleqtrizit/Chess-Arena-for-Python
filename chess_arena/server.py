@@ -460,7 +460,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     try:
         while True:
-            data = await websocket.receive_json()
+            try:
+                data = await websocket.receive_json()
+            except (RuntimeError, WebSocketDisconnect):
+                # WebSocket disconnected
+                break
+
             message_type = data.get("type")
 
             if message_type == "join_queue":
