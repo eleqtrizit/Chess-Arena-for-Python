@@ -108,3 +108,35 @@ async def test_same_connection_cannot_match_with_itself() -> None:
     # First join should timeout since no real opponent
     result1 = await task1
     assert result1 is None
+
+
+@pytest.mark.asyncio
+async def test_disconnected_player_removed_from_queue() -> None:
+    """Test that a player who disconnects while waiting is removed from queue."""
+    queue = MatchmakingQueue()
+
+    # Player 1 joins and starts waiting
+    task1 = asyncio.create_task(queue.join_queue("conn1", timeout=5.0))
+    await asyncio.sleep(0.1)  # Ensure player is waiting
+
+    # Verify player is in queue
+    assert queue.waiting_player is not None
+    assert queue.waiting_player.connection_id == "conn1"
+
+    # Player 1 disconnects - remove from queue
+    removed = await queue.remove_from_queue("conn1")
+    assert removed is True
+
+    # Verify queue is now empty
+    assert queue.waiting_player is None
+
+    # Player 2 joins and should become the new waiting player (not match with removed player)
+    task2 = asyncio.create_task(queue.join_queue("conn2", timeout=0.2))
+
+    # Player 2 should timeout (no opponent)
+    result2 = await task2
+    assert result2 is None
+
+    # Player 1's task should have been cancelled
+    result1 = await task1
+    assert result1 is None
