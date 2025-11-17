@@ -109,6 +109,9 @@ class MatchmakingQueue:
                     if self.waiting_player is queue_entry:
                         self.waiting_player = None
                 return None
+            except asyncio.CancelledError:
+                # Connection was cancelled (disconnected while waiting)
+                return None
 
         return None
 
