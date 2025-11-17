@@ -94,6 +94,8 @@ class MatchmakingQueue:
                     return None
 
                 # Second player - create match and notify both players
+                # Capture the waiting player's connection ID before clearing it
+                self.last_matched_waiting_player_conn_id = self.waiting_player.connection_id
                 player1_result, player2_result = self._create_match()
 
                 # Notify waiting player with their result
@@ -120,6 +122,9 @@ class MatchmakingQueue:
                 return None
             except asyncio.CancelledError:
                 # Connection was cancelled (disconnected while waiting)
+                async with self.lock:
+                    if self.waiting_player is queue_entry:
+                        self.waiting_player = None
                 return None
 
         return None
@@ -141,6 +146,15 @@ class MatchmakingQueue:
                 self.waiting_player = None
                 return True
             return False
+
+    def get_queue_size(self) -> int:
+        """
+        Get the current number of players waiting in queue.
+
+        :return: Number of players waiting (0 or 1)
+        :rtype: int
+        """
+        return 1 if self.waiting_player is not None else 0
 
     def _create_match(self) -> tuple[PlayerMatchResult, PlayerMatchResult]:
         """

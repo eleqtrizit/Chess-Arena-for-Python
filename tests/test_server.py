@@ -333,3 +333,37 @@ class TestTimeLimitEnforcement:
                     response1 = first_ws.receive_json()
                     assert response1["type"] == "move_made"
                     assert response1["game_over"] is False
+
+
+@pytest.mark.asyncio
+class TestHealthCheck:
+    """Test cases for health check functionality."""
+
+    async def test_healthy_players_can_match(self) -> None:
+        """Test that healthy players can be matched successfully."""
+        client = TestClient(app)
+
+        # Create a matchmade game with two players
+        with client.websocket_connect("/ws") as ws1:
+            with client.websocket_connect("/ws") as ws2:
+                # Player 1 joins queue
+                ws1.send_json({"type": "join_queue"})
+
+                # Player 2 joins queue - this should create a match
+                ws2.send_json({"type": "join_queue"})
+
+                # Receive match_found messages
+                msg1 = ws1.receive_json()
+                msg2 = ws2.receive_json()
+
+                # Both players should be matched successfully
+                assert msg1["type"] == "match_found"
+                assert msg2["type"] == "match_found"
+
+                # Both should have the same game_id
+                assert msg1["game_id"] == msg2["game_id"]
+
+                # Players should have different colors
+                assert msg1["assigned_color"] != msg2["assigned_color"]
+                assert msg1["assigned_color"] in ["white", "black"]
+                assert msg2["assigned_color"] in ["white", "black"]

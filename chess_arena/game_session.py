@@ -1,10 +1,13 @@
 """Game session manager for tracking active games and disconnections."""
 
 import asyncio
+import logging
 import time
 from typing import Dict, Optional, Set
 
 from chess_arena.connection_manager import ConnectionManager
+
+logger = logging.getLogger(__name__)
 
 
 class GameSession:
@@ -120,14 +123,18 @@ class GameSessionManager:
         :return: Created game session
         :rtype: GameSession
         """
+        logger.debug(f"[GameSession:{game_id}] Creating session with player connections: {player_connections}")
         async with self.lock:
             session = GameSession(game_id, player_connections)
             self.sessions[game_id] = session
+            logger.debug(f"[GameSession:{game_id}] Session created and stored")
 
             # Track reverse mapping
             for connection_id in player_connections.values():
                 self.connection_to_game[connection_id] = game_id
+                logger.debug(f"[GameSession:{game_id}] Connection {connection_id} mapped to game")
 
+            logger.debug(f"[GameSession:{game_id}] Session creation completed")
             return session
 
     async def handle_disconnect(self, connection_id: str) -> Optional[Dict[str, Optional[str]]]:
@@ -139,13 +146,17 @@ class GameSessionManager:
         :return: Dict with game_id, player_id, and status if forfeit/cancel occurred
         :rtype: Optional[Dict[str, Optional[str]]]
         """
+        logger.debug(f"[GameSession] Handling disconnect for connection {connection_id}")
         async with self.lock:
             game_id = self.connection_to_game.get(connection_id)
             if not game_id:
+                logger.debug(f"[GameSession] No game found for connection {connection_id}")
                 return None
 
+            logger.debug(f"[GameSession:{game_id}] Found game for connection {connection_id}")
             session = self.sessions.get(game_id)
             if not session:
+                logger.debug(f"[GameSession:{game_id}] No session found")
                 return None
 
             # Find which player disconnected
@@ -156,14 +167,18 @@ class GameSessionManager:
                     break
 
             if not player_id:
+                logger.debug(f"[GameSession:{game_id}] No player found for connection {connection_id}")
                 return None
 
+            logger.debug(f"[GameSession:{game_id}] Player {player_id} disconnected from connection {connection_id}")
             # Mark player as disconnected
             session.mark_disconnected(player_id)
 
             # Check for immediate forfeit/cancel
+            logger.debug(f"[GameSession:{game_id}] Checking for forfeit")
             result = session.check_forfeit()
             if result:
+                logger.debug(f"[GameSession:{game_id}] Forfeit detected: {result}")
                 return {
                     "game_id": game_id,
                     "disconnected_player_id": player_id,
@@ -171,6 +186,7 @@ class GameSessionManager:
                     "winner": result if result != "cancelled" else None
                 }
 
+            logger.debug(f"[GameSession:{game_id}] Player marked as disconnected, no immediate forfeit")
             return {
                 "game_id": game_id,
                 "disconnected_player_id": player_id,
@@ -247,8 +263,14 @@ class GameSessionManager:
         :param game_id: Game identifier
         :type game_id: str
         """
+        logger.debug(f"[GameSession:{game_id}] Removing session")
         async with self.lock:
             session = self.sessions.pop(game_id, None)
             if session:
+                logger.debug(f"[GameSession:{game_id}] Session found, removing connection mappings")
                 for connection_id in session.player_connections.values():
                     self.connection_to_game.pop(connection_id, None)
+                    logger.debug(f"[GameSession:{game_id}] Removed connection {connection_id} mapping")
+                logger.debug(f"[GameSession:{game_id}] Session removed successfully")
+            else:
+                logger.debug(f"[GameSession:{game_id}] No session found to remove")

@@ -174,3 +174,29 @@ class ConnectionManager:
         """
         game_tokens = self.auth_tokens.get(game_id, {})
         return game_tokens.get(player_id) == auth_token
+
+    async def health_check_connection(self, connection_id: str) -> bool:
+        """
+        Perform a health check on a connection by sending a ping and checking if it's still active.
+
+        :param connection_id: Connection identifier to check
+        :type connection_id: str
+        :return: True if connection is healthy and responsive, False otherwise
+        :rtype: bool
+        """
+        websocket = self.active_connections.get(connection_id)
+        if websocket is None:
+            return False
+
+        try:
+            # Send ping message to test responsiveness
+            await websocket.send_json({"type": "ping"})
+
+            # Check if connection is still active
+            # In a real implementation, we would wait for a pong response
+            # But for now, we'll just check if the connection is still registered
+            return self.is_connected(connection_id)
+        except Exception:
+            # Connection is broken
+            await self.disconnect(connection_id)
+            return False

@@ -1,5 +1,7 @@
 """FastAPI server for chess arena application."""
 
+import asyncio
+import logging
 import os
 import time
 import uuid
@@ -15,12 +17,17 @@ from chess_arena.persistence import load_games, log_game_state, save_games
 from chess_arena.queue import MatchmakingQueue
 from chess_arena.renderer import BoardRenderer
 
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Chess Arena API", version="1.0.0")
 games: Dict[str, ChessBoard] = {}
-matchmaking_queue = MatchmakingQueue()
 connection_manager = ConnectionManager()
+matchmaking_queue = MatchmakingQueue(connection_manager)
 game_session_manager = GameSessionManager(connection_manager)
 move_start_times: Dict[str, Dict[str, float]] = {}  # {game_id: {player_id: timestamp}}
+game_creation_times: Dict[str, float] = {}  # {game_id: timestamp}
 
 # Server-enforced search time (optional)
 SERVER_SEARCH_TIME: Optional[float] = None
@@ -67,8 +74,10 @@ def persist_games() -> None:
 def on_startup() -> None:
     """Handle application startup event."""
     global games
+    logger.debug("Starting Chess Arena server")
     games = load_games()
     loaded_count = len(games)
+    logger.debug(f"Loaded {loaded_count} persisted game(s)")
 
     print("\n" + "=" * 50)
     print("Chess Arena Server Started")
@@ -79,6 +88,7 @@ def on_startup() -> None:
         print(f"Search time limit enforced: {SERVER_SEARCH_TIME}s per move")
 
     print("=" * 50)
+    logger.debug("Chess Arena server started successfully")
 
 
 class NewGameResponse(BaseModel):
@@ -460,50 +470,160 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     try:
         while True:
-            data = await websocket.receive_json()
+            try:
+                data = await websocket.receive_json()
+            except (RuntimeError, WebSocketDisconnect):
+                # WebSocket disconnected while receiving
+                raise WebSocketDisconnect()
+
             message_type = data.get("type")
 
             if message_type == "join_queue":
+                logger.debug(f"[WS:{connection_id}] Joining matchmaking queue")
                 # Join matchmaking queue
-                match_result = await matchmaking_queue.join_queue(connection_id, timeout=60.0)
+                try:
+                    match_result = await matchmaking_queue.join_queue(connection_id, timeout=60.0)
+                except asyncio.CancelledError:
+                    logger.debug(f"[WS:{connection_id}] WebSocket disconnected while in queue")
+                    # WebSocket disconnected while in queue
+                    raise WebSocketDisconnect()
 
                 if match_result is None:
+                    logger.debug(f"[WS:{connection_id}] No opponent found in queue")
                     await connection_manager.send_message(connection_id, {
                         "type": "queue_timeout",
                         "message": "No opponent found"
                     })
                 else:
-                    # Match found
+                    # Match found - perform health checks on both players before proceeding
                     game_id = match_result.game_id
                     player_id = match_result.player_id
+                    logger.debug(f"[WS:{connection_id}] Match found for game {game_id}, player {player_id}")
+
+                    # Get the waiting player connection ID from the queue entry
+                    # The waiting player is the one whose future was set in the queue
+                    waiting_player_conn_id = None
+                    async with matchmaking_queue.lock:
+                        if matchmaking_queue.waiting_player:
+                            # This shouldn't happen since we just matched, but let's be safe
+                            waiting_player_conn_id = matchmaking_queue.waiting_player.connection_id
+
+                    logger.debug(f"[WS:{connection_id}] Waiting player connection ID: {waiting_player_conn_id}")
+
+                    # Perform health checks on both players (passive check only)
+                    players_healthy = True
+                    if waiting_player_conn_id:
+                        logger.debug(f"[Health Check] Checking health of both players before starting game {game_id}")
+
+                        # Check health of waiting player (passive check)
+                        logger.debug(f"[Health Check] Checking health of waiting player {waiting_player_conn_id}")
+                        waiting_player_healthy = connection_manager.is_connected(waiting_player_conn_id)
+                        if not waiting_player_healthy:
+                            logger.debug(f"[Health Check] Waiting player {waiting_player_conn_id} is not healthy")
+                            print(f"[Health Check] Waiting player {waiting_player_conn_id} is not healthy")
+                            players_healthy = False
+
+                        # Check health of current player (passive check)
+                        logger.debug(f"[Health Check] Checking health of current player {connection_id}")
+                        current_player_healthy = connection_manager.is_connected(connection_id)
+                        if not current_player_healthy:
+                            logger.debug(f"[Health Check] Current player {connection_id} is not healthy")
+                            print(f"[Health Check] Current player {connection_id} is not healthy")
+                            players_healthy = False
+
+                    if not players_healthy:
+                        # Cancel the game creation and notify players
+                        logger.debug(f"[Health Check] Game {game_id} cancelled due to unhealthy player(s)")
+                        print(f"[Health Check] Game {game_id} cancelled due to unhealthy player(s)")
+
+                        # Check if this is a newly created game (within first minute) and delete from history if so
+                        if game_id in game_creation_times:
+                            creation_time = game_creation_times[game_id]
+                            if time.time() - creation_time < 60:  # Within first minute
+                                # Remove game from games dictionary and persistence
+                                if game_id in games:
+                                    logger.debug(
+                                        f"[Health Check] Deleting game {game_id} from history "
+                                        f"(cancelled within first minute)")
+                                    del games[game_id]
+                                    del game_creation_times[game_id]
+                                    persist_games()
+                                    print(
+                                        f"[Health Check] Game {game_id} deleted from history "
+                                        f"(cancelled within first minute)")
+
+                        await connection_manager.send_message(connection_id, {
+                            "type": "error",
+                            "message": "Game cancelled - one or more players are not responding"
+                        })
+
+                        # Try to notify the waiting player if still connected
+                        if waiting_player_conn_id:
+                            logger.debug(
+                                f"[Health Check] Notifying waiting player {waiting_player_conn_id} "
+                                f"of cancellation")
+                            await connection_manager.send_message(waiting_player_conn_id, {
+                                "type": "error",
+                                "message": "Game cancelled - one or more players are not responding"
+                            })
+
+                        # Don't create the game, return to queue state
+                        logger.debug(f"[Health Check] Returning {connection_id} to queue state")
+                        return
+
+                    # Players are healthy, proceed with game creation
+                    logger.debug(f"[Health Check] Both players are healthy, creating game {game_id}")
+                    print(f"[Health Check] Both players are healthy, creating game {game_id}")
 
                     # Create the game if it doesn't exist yet
                     if game_id not in games:
+                        logger.debug(f"[Game:{game_id}] Creating new matchmade game")
                         games[game_id] = ChessBoard(player_mappings=match_result.player_mappings)
+                        game_creation_times[game_id] = time.time()  # Track when the game was created
                         persist_games()
                         print(f"\n[New matchmade game created: {game_id}]")
                         print_board(games[game_id], game_id)
 
                     # Store connection info
+                    logger.debug(f"[WS:{connection_id}] Setting game info: game_id={game_id}, player_id={player_id}")
                     connection_manager.set_game_info(connection_id, game_id, player_id)
 
                     # Generate auth token for this player
                     auth_token = connection_manager.generate_auth_token(game_id, player_id)
+                    logger.debug(f"[WS:{connection_id}] Generated auth token for game {game_id}")
 
                     # Create game session tracking
                     game_connections = connection_manager.get_game_connections(game_id)
-                    if len(game_connections) == 2:
-                        # Both players connected, create session
-                        await game_session_manager.create_session(game_id, {
-                            pid: cid for cid, pid in game_connections.items()
-                        })
+                    logger.debug(f"[Game:{game_id}] Current game connections: {game_connections}")
 
-                        # Initialize timer for white's first move if SERVER_SEARCH_TIME is set
-                        if SERVER_SEARCH_TIME is not None:
-                            white_player_id = match_result.first_move
-                            if game_id not in move_start_times:
-                                move_start_times[game_id] = {}
-                            move_start_times[game_id][white_player_id] = time.time()
+                    # Always create session, don't wait for 2 connections since we already have a match
+                    logger.debug(f"[Game:{game_id}] Creating game session")
+                    await game_session_manager.create_session(game_id, {
+                        player_id: connection_id  # Add current player
+                    })
+
+                    # Add the waiting player to the session if we have their connection ID
+                    if waiting_player_conn_id:
+                        # We need to get the waiting player's player_id from the match result
+                        waiting_player_id = None
+                        for pid in match_result.player_mappings.keys():
+                            if pid != player_id:
+                                waiting_player_id = pid
+                                break
+                        if waiting_player_id:
+                            logger.debug(f"[Game:{game_id}] Adding waiting player {waiting_player_id} to session")
+                            # Update the session with both players
+                            session = game_session_manager.get_session(game_id)
+                            if session:
+                                session.player_connections[waiting_player_id] = waiting_player_conn_id
+
+                    # Initialize timer for white's first move if SERVER_SEARCH_TIME is set
+                    if SERVER_SEARCH_TIME is not None:
+                        white_player_id = match_result.first_move
+                        logger.debug(f"[Game:{game_id}] Initializing move timer for white player {white_player_id}")
+                        if game_id not in move_start_times:
+                            move_start_times[game_id] = {}
+                        move_start_times[game_id][white_player_id] = time.time()
 
                     # Send match found response with auth token
                     match_message: Dict[str, Any] = {
@@ -516,6 +636,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     }
                     if SERVER_SEARCH_TIME is not None:
                         match_message["server_search_time"] = SERVER_SEARCH_TIME
+
+                    logger.debug(f"[WS:{connection_id}] Sending match_found message: {match_message}")
                     await connection_manager.send_message(connection_id, match_message)
 
             elif message_type == "make_move":
@@ -718,19 +840,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         # Handle disconnect
+        logger.debug(f"[WS:{connection_id}] WebSocket disconnected")
         await connection_manager.disconnect(connection_id)
 
         # Remove from matchmaking queue if still waiting
+        logger.debug(f"[WS:{connection_id}] Removing from matchmaking queue")
         await matchmaking_queue.remove_from_queue(connection_id)
+        queue_count = matchmaking_queue.get_queue_size()
+        print(f"\n[Disconnect] Connection {connection_id} removed. Queue count: {queue_count}")
+        logger.debug(f"[Queue] Queue count after removal: {queue_count}")
 
         if game_id and player_id:
+            logger.debug(f"[Game:{game_id}] Handling disconnect for player {player_id}")
             disconnect_info = await game_session_manager.handle_disconnect(connection_id)
 
             if disconnect_info:
                 status = disconnect_info.get("status")
+                logger.debug(f"[Game:{game_id}] Disconnect status: {status}")
 
                 if status == "disconnected":
                     # Notify opponent
+                    logger.debug(f"[Game:{game_id}] Notifying opponent of disconnection")
                     await connection_manager.send_to_game(game_id, {
                         "type": "opponent_disconnected",
                         "message": "Your opponent has disconnected. Waiting 60s for reconnection...",
@@ -739,6 +869,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 elif status in ["forfeit", "cancelled"]:
                     # Game ended
+                    logger.debug(f"[Game:{game_id}] Game ended with status: {status}")
                     await connection_manager.send_to_game(game_id, {
                         "type": "game_over",
                         "status": status,
@@ -747,6 +878,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     })
 
                     # Clean up session
+                    logger.debug(f"[Game:{game_id}] Cleaning up session")
                     await game_session_manager.remove_session(game_id)
 
 
