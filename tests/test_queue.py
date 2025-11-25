@@ -50,6 +50,30 @@ async def test_single_player_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_single_player_no_timeout() -> None:
+    """Test that a single player waits indefinitely when timeout is None."""
+    queue = MatchmakingQueue()
+
+    # Start a player with no timeout
+    task = asyncio.create_task(queue.join_queue("conn1", timeout=None))
+
+    # Give it a moment to start waiting
+    await asyncio.sleep(0.1)
+
+    # Verify the player is still waiting
+    assert queue.waiting_player is not None
+    assert queue.waiting_player.connection_id == "conn1"
+    assert not task.done()
+
+    # Cancel the task to clean up
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
 async def test_players_assigned_different_colors() -> None:
     """Test that matched players get different colors."""
     queue = MatchmakingQueue()

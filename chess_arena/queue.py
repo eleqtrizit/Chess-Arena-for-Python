@@ -68,14 +68,14 @@ class MatchmakingQueue:
         self.lock = asyncio.Lock()
         self.connection_manager = connection_manager
 
-    async def join_queue(self, connection_id: str, timeout: float = 60.0) -> Optional[PlayerMatchResult]:
+    async def join_queue(self, connection_id: str, timeout: Optional[float] = 60.0) -> Optional[PlayerMatchResult]:
         """
         Join the matchmaking queue and wait for an opponent.
 
         :param connection_id: WebSocket connection identifier
         :type connection_id: str
-        :param timeout: Maximum time to wait in seconds
-        :type timeout: float
+        :param timeout: Maximum time to wait in seconds, or None for no timeout
+        :type timeout: Optional[float]
         :return: PlayerMatchResult if matched with player-specific info, None if timeout occurred
         :rtype: Optional[PlayerMatchResult]
         """
@@ -113,7 +113,12 @@ class MatchmakingQueue:
         # Wait for another player
         if queue_entry:
             try:
-                result = await asyncio.wait_for(queue_entry.future, timeout=timeout)
+                if timeout is None:
+                    # No timeout - wait indefinitely
+                    result = await queue_entry.future
+                else:
+                    # Wait with timeout
+                    result = await asyncio.wait_for(queue_entry.future, timeout=timeout)
                 return result
             except asyncio.TimeoutError:
                 async with self.lock:

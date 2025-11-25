@@ -34,6 +34,15 @@ SERVER_SEARCH_TIME: Optional[float] = None
 if "SEARCH_TIME" in os.environ and os.environ["SEARCH_TIME"] != "None":
     SERVER_SEARCH_TIME = float(os.environ["SEARCH_TIME"])
 
+# Matchmaking queue timeout configuration
+MATCHMAKING_TIMEOUT: Optional[float] = 60.0  # Default 60 seconds
+if "MATCHMAKING_TIMEOUT" in os.environ:
+    timeout_str = os.environ["MATCHMAKING_TIMEOUT"]
+    if timeout_str.lower() == "none":
+        MATCHMAKING_TIMEOUT = None  # No timeout
+    else:
+        MATCHMAKING_TIMEOUT = float(timeout_str)
+
 
 def get_game_board(game_id: str) -> ChessBoard:
     """
@@ -482,7 +491,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 logger.debug(f"[WS:{connection_id}] Joining matchmaking queue")
                 # Join matchmaking queue
                 try:
-                    match_result = await matchmaking_queue.join_queue(connection_id, timeout=60.0)
+                    match_result = await matchmaking_queue.join_queue(connection_id, timeout=MATCHMAKING_TIMEOUT)
                 except asyncio.CancelledError:
                     logger.debug(f"[WS:{connection_id}] WebSocket disconnected while in queue")
                     # WebSocket disconnected while in queue

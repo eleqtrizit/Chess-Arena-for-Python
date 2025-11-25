@@ -21,10 +21,19 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=9002, help="Port to bind the server to (default: 9002)")
     parser.add_argument("--search-time", type=float, default=None,
                         help="Required search time per move in seconds (optional, enforced for matchmade games)")
+    parser.add_argument("-t", "--timeout", type=float, default=60.0,
+                        help="Matchmaking queue timeout in seconds (default: 60.0, use -1 for no timeout)")
     args = parser.parse_args()
 
     if args.search_time is not None:
         os.environ["SEARCH_TIME"] = str(args.search_time)
+
+    # Set matchmaking timeout in environment variable
+    if args.timeout == -1:
+        # Deactivate timeout entirely
+        os.environ["MATCHMAKING_TIMEOUT"] = "none"
+    else:
+        os.environ["MATCHMAKING_TIMEOUT"] = str(args.timeout)
 
     uvicorn.run("chess_arena.server:app", host=args.host, port=args.port, reload=True)
 
